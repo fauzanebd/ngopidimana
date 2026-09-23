@@ -483,3 +483,60 @@ Rules that keep projects from tripping over each other:
 5. Give the other service its own DNS record; Caddy issues the certificate on the
    next reload and needs the record to resolve first.
 6. Keep an eye on the host: `docker stats`, `df -h`, `docker system prune -f`.
+
+## 11. The deployed environment
+
+What is actually running today, so a future change starts from facts rather than
+the assumptions in sections 1-10.
+
+| | |
+| --- | --- |
+| Host | `ubuntu@luffy` — `43.156.242.136`, Ubuntu 24.04, Docker 29.8.1 / Compose v5.5.1 |
+| Repo | `/srv/wheretowfc`, clone of `github.com/fauzanebd/ngopidimana` (branch `main`) |
+| Env | `/srv/wheretowfc/.env` (mode `600`) |
+| API | `https://api.pengenkekopi.shop` — Caddy + Let's Encrypt, `A` record **DNS only** |
+| Public app | `https://pengenkekopi.shop` and `https://www.pengenkekopi.shop` |
+| Admin app | `https://admin.pengenkekopi.shop` |
+| Pages projects | `ngopidimana` (`ngopidimana-28i.pages.dev`), `ngopidimana-admin` (`ngopidimana-admin.pages.dev`) |
+| Mail | Mailjet `in-v3.mailjet.com:587` STARTTLS, from `no-reply@pengenkekopi.shop` (wildcard domain sender) |
+| Allow-list | `fauzanebd@gmail.com` (owner) |
+
+`CORS_ORIGIN` must list every origin a browser will load the apps from, including
+the `*.pages.dev` aliases, because those are what preview deployments and the
+default Pages URLs use:
+
+```text
+CORS_ORIGIN=https://pengenkekopi.shop,https://www.pengenkekopi.shop,https://admin.pengenkekopi.shop,https://ngopidimana-28i.pages.dev,https://ngopidimana-admin.pages.dev
+```
+
+Because the admin app and the API share the registrable domain `pengenkekopi.shop`,
+the session cookie is first-party and `ADMIN_COOKIE_SAMESITE=lax` is correct.
+
+### Applying an env change without bouncing the datastores
+
+Every service in `deploy/compose.prod.yaml` reads the same `../.env`, so a plain
+`up -d` after editing it recreates **db and redis as well** — a few seconds of
+datastore downtime (data lives in named volumes, so nothing is lost). To apply a
+change to only the application containers:
+
+```bash
+docker compose -f deploy/compose.prod.yaml up -d --no-deps api worker
+```
+
+### Pages custom domains need their DNS records
+
+Adding a custom domain through the API (rather than the dashboard) does **not**
+create the DNS record. Create it yourself and keep it proxied, or the hostname
+returns 522:
+
+```bash
+# apex -> web project, admin -> admin project, both proxied (orange cloud)
+curl -X POST -H "Authorization: Bearer $CF_API_TOKEN" -H "Content-Type: application/json" \
+  "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/dns_records" \
+  -d '{"type":"CNAME","name":"admin.pengenkekopi.shop","content":"ngopidimana-admin.pages.dev","ttl":1,"proxied":true}'
+```
+
+The domain then reports `status: pending` while its certificate is issued (a few
+minutes) even though it already serves traffic through Cloudflare's universal
+certificate. `pengenkekopi.shop` has no `_dmarc` record yet; adding
+`v=DMARC1; p=none; rua=mailto:you@pengenkekopi.shop` is the safe first step.
