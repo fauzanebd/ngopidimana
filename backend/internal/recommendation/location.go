@@ -66,7 +66,7 @@ func enforceLocationIntent(query string, profile Interpretation) Interpretation 
 			profile.Location = "Jakarta"
 		}
 	}
-	profile.Summary = interpretationSummary(profile)
+	profile.Summary = interpretationSummary(profile, LocaleEnglish)
 	return profile
 }
 
@@ -74,7 +74,7 @@ func applyDefaultUserLocation(profile Interpretation, userLocation *Point) Inter
 	if profile.LocationMode == "default" && userLocation != nil {
 		profile.Location = "Near you"
 		profile.LocationMode = "nearby"
-		profile.Summary = interpretationSummary(profile)
+		profile.Summary = interpretationSummary(profile, LocaleEnglish)
 	}
 	return profile
 }

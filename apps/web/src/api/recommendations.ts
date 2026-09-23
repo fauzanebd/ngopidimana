@@ -1,14 +1,33 @@
+import type { Locale, LocationFailure } from "../i18n";
 import type { RecommendationResponse, UserLocation } from "../types";
 
-export async function fetchRecommendations(query: string, signal: AbortSignal, userLocation?: UserLocation): Promise<RecommendationResponse> {
-  const response = await fetch("/v1/recommendations", {
+export class RefreshError extends Error {
+  readonly detail: string;
+  constructor(detail: string) {
+    super("recommendation request failed");
+    this.name = "RefreshError";
+    this.detail = detail;
+  }
+}
+
+export class LocationError extends Error {
+  readonly code: LocationFailure;
+  constructor(code: LocationFailure) {
+    super(`location failure: ${code}`);
+    this.name = "LocationError";
+    this.code = code;
+  }
+}
+
+export async function fetchRecommendations(query: string, locale: Locale, signal: AbortSignal, userLocation?: UserLocation): Promise<RecommendationResponse> {
+  const response = await fetch(`${import.meta.env.VITE_API_BASE_URL ?? ""}/v1/recommendations`, {
     method: "POST",
     signal,
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ query, limit: 15, ...(userLocation ? { user_location: userLocation } : {}) }),
+    body: JSON.stringify({ query, limit: 15, locale, ...(userLocation ? { user_location: userLocation } : {}) }),
   });
   const body = await response.json();
-  if (!response.ok) throw new Error(body.error || "Could not refresh recommendations");
+  if (!response.ok) throw new RefreshError(typeof body.error === "string" ? body.error : "");
   return body;
 }
 
@@ -24,18 +43,16 @@ export function hasNamedLocation(query: string) {
 }
 
 export function requestUserLocation(): Promise<UserLocation> {
-  if (!("geolocation" in navigator)) {
-    return Promise.reject(new Error("This browser does not support location-based searches."));
-  }
-  return new Promise((resolve, reject) => {
-    navigator.geolocation.getCurrentPosition(
-      ({ coords }) => resolve({ lat: coords.latitude, lng: coords.longitude }),
-      (cause) => {
-        if (cause.code === cause.PERMISSION_DENIED) reject(new Error("Location access is needed for “near me” searches. Allow it in your browser, then try again."));
-        else if (cause.code === cause.TIMEOUT) reject(new Error("Your location request timed out. Try the search again."));
-        else reject(new Error("Your current location could not be determined."));
-      },
-      { enableHighAccuracy: false, timeout: 8000, maximumAge: 300000 },
-    );
-  });
+  if (!("geolocation" in navigator)) return Promise.reject(new LocationError("unsupported"));
+  const { promise, resolve, reject } = Promise.withResolvers<UserLocation>();
+  navigator.geolocation.getCurrentPosition(
+    ({ coords }) => resolve({ lat: coords.latitude, lng: coords.longitude }),
+    (cause) => {
+      if (cause.code === cause.PERMISSION_DENIED) reject(new LocationError("denied"));
+      else if (cause.code === cause.TIMEOUT) reject(new LocationError("timeout"));
+      else reject(new LocationError("unknown"));
+    },
+    { enableHighAccuracy: false, timeout: 8000, maximumAge: 300000 },
+  );
+  return promise;
 }

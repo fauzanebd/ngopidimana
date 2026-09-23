@@ -16,7 +16,13 @@ body { background: #f7f5ed; }
 .ambient-two { width: 30rem; height: 24rem; left: -14rem; bottom: -8rem; background: radial-gradient(circle, rgba(181,196,143,.56), rgba(181,196,143,0)); }
 
 .composer { transition: border-color 180ms ease, transform 180ms ease; }
-.composer:focus-within { border-color: rgba(41,77,55,.55); transform: translateY(-1px); }
+.composer:focus-within { border-color: rgba(41,77,55,.9); transform: translateY(-1px); }
+
+/* The brief card carries focus for its textarea, so the textarea itself must not
+   draw an outline: the card is already a rounded rectangle and a second one
+   nested inside it reads as a glitch. */
+.brief-card { transition: border-color 180ms ease; }
+.brief-card:focus-within { border-color: rgba(41,77,55,.9); }
 
 .intent-chip {
   display: inline-flex;
@@ -30,12 +36,6 @@ body { background: #f7f5ed; }
   font-size: 11px;
   font-weight: 600;
 }
-.intent-chip-hard {
-  border-color: rgba(41,77,55,.82);
-  background: #294d37;
-  color: #fffdf7;
-}
-.intent-chip-hard .intent-chip-qualifier { color: rgba(255,253,247,.68); }
 
 .result-card { will-change: transform, opacity; }
 .results-panel {
@@ -57,6 +57,21 @@ body { background: #f7f5ed; }
   left: 10px;
   right: 10px;
   bottom: max(10px, env(safe-area-inset-bottom));
+}
+/* The composer floats over the scrolling list, so it needs paper behind it that
+   reaches the viewport edges. The box is 32px taller than the composer and fades
+   to nothing across that excess, so the list dissolves into the backdrop instead
+   of being cut off by a hard edge. */
+.mobile-composer::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  top: -32px;
+  left: -10px;
+  right: -10px;
+  bottom: calc(-1 * max(10px, env(safe-area-inset-bottom, 0px)));
+  pointer-events: none;
+  background: linear-gradient(to bottom, rgba(247,245,237,0) 0, rgba(247,245,237,.5) 14px, rgba(247,245,237,.94) 26px, #f7f5ed 32px);
 }
 .place-art { background: linear-gradient(150deg, #d9e7d2, #94ad87); }
 .art-sage { background: linear-gradient(155deg, #dce8d4 0%, #9bb188 55%, #536e50 100%); }

@@ -8,9 +8,11 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
+	"github.com/fauzanebd/wheretowfc/backend/internal/auth"
 	"github.com/fauzanebd/wheretowfc/backend/internal/catalogue"
 	"github.com/fauzanebd/wheretowfc/backend/internal/config"
 	"github.com/fauzanebd/wheretowfc/backend/internal/googleplaces"
@@ -21,6 +23,21 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/redis/go-redis/v9"
 )
+
+// adminMailer builds the mailer for the API and reports which transport it got.
+func adminMailer(cfg config.Config) auth.Mailer {
+	if cfg.SMTPHost == "" {
+		log.Printf("SMTP_HOST is not set: catalogue admin sign-in links will be written to this log instead of emailed")
+		return auth.LogMailer{}
+	}
+	mode := auth.SMTPTLSMode(cfg.SMTPPort, cfg.SMTPTLS)
+	if mode == "none" {
+		log.Printf("SMTP_TLS=none: sign-in mail goes to %s:%d unencrypted (only acceptable for a local relay)", cfg.SMTPHost, cfg.SMTPPort)
+	} else {
+		log.Printf("catalogue admin sign-in email via %s:%d (%s)", cfg.SMTPHost, cfg.SMTPPort, mode)
+	}
+	return auth.MailerFor(cfg.SMTPHost, cfg.SMTPPort, cfg.SMTPUsername, cfg.SMTPPassword, cfg.SMTPFrom, cfg.SMTPTLS)
+}
 
 type redisHealth struct{ client *redis.Client }
 
@@ -64,9 +81,28 @@ func main() {
 		log.Printf("Google Place Details enabled for uncached admin review display")
 	}
 
+	authStore := auth.NewPostgresStore(database)
+	authService := auth.NewService(authStore, adminMailer(cfg), cfg.AdminAppURL).WithSessionTTL(cfg.AdminSessionTTL)
+	sameSite := httpapi.ParseSameSite(cfg.AdminCookieSameSite)
+	log.Printf("catalogue admin sign-in: %s (session %s, cookie SameSite=%s)", cfg.AdminAppURL, cfg.AdminSessionTTL, cfg.AdminCookieSameSite)
+
 	server := &http.Server{
-		Addr:              ":" + cfg.Port,
-		Handler:           httpapi.NewServer(recommendationService, ingestionService, googlePlacesClient, redisHealth{redisClient}, cfg.CORSOrigin),
+		Addr: ":" + cfg.Port,
+		Handler: httpapi.NewServer(httpapi.Options{
+			Recommendations: recommendationService,
+			Ingestion:       ingestionService,
+			GooglePlaces:    googlePlacesClient,
+			Health:          redisHealth{redisClient},
+			CORSOrigins:     cfg.CORSOrigin,
+			Auth:            authService,
+			Cookies: httpapi.CookiePolicy{
+				Name:     "wfc_admin_session",
+				Domain:   cfg.AdminCookieDomain,
+				Secure:   strings.HasPrefix(cfg.AdminAppURL, "https://") || sameSite == http.SameSiteNoneMode,
+				SameSite: sameSite,
+				TTL:      cfg.AdminSessionTTL,
+			},
+		}),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      15 * time.Second,

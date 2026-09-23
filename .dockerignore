@@ -1,0 +1,23 @@
+# Build context for backend/Dockerfile (built from the repository root).
+# Nothing here is needed to compile the Go binaries.
+
+.git
+.gitignore
+.github
+node_modules
+**/node_modules
+dist
+**/dist
+.pnpm-store
+**/.pnpm-store
+*.tsbuildinfo
+**/*.tsbuildinfo
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store
+deploy
+apps
+packages
+coffee-place-recommendation-prd.docx

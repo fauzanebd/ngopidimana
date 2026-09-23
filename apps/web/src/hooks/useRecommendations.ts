@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { fetchRecommendations, hasNamedLocation, needsUserLocation, requestUserLocation } from "../api/recommendations";
+import { LocationError, fetchRecommendations, hasNamedLocation, needsUserLocation, requestUserLocation } from "../api/recommendations";
+import { useI18n, type LocationFailure } from "../i18n";
 import type { RecommendationResponse, UserLocation } from "../types";
 
 export type RecommendationStatus = "idle" | "loading" | "ready" | "error";
 
 export function useRecommendations(query: string) {
+  const { locale, messages } = useI18n();
   const [data, setData] = useState<RecommendationResponse | null>(null);
   const [status, setStatus] = useState<RecommendationStatus>("idle");
   const [error, setError] = useState("");
@@ -12,12 +14,15 @@ export function useRecommendations(query: string) {
   const sequence = useRef(0);
   const userLocation = useRef<UserLocation | null>(null);
   const locationRequest = useRef<Promise<UserLocation> | null>(null);
-  const locationProblem = useRef<Error | null>(null);
+  const locationProblem = useRef<LocationFailure | null>(null);
 
   useEffect(() => {
     const clean = query.trim();
     if (clean.length < 3) {
       setStatus("idle");
+      setData(null);
+      setError("");
+      setWarning("");
       return;
     }
     const controller = new AbortController();
@@ -37,10 +42,9 @@ export function useRecommendations(query: string) {
                 locationProblem.current = null;
                 return location;
               })
-              .catch((cause) => {
-                const problem = cause instanceof Error ? cause : new Error("Your current location could not be determined.");
-                locationProblem.current = problem;
-                throw problem;
+              .catch((cause: unknown) => {
+                locationProblem.current = cause instanceof LocationError ? cause.code : "unknown";
+                throw cause;
               })
               .finally(() => { locationRequest.current = null; });
           }
@@ -53,18 +57,18 @@ export function useRecommendations(query: string) {
           }
           if (!userLocation.current && locationProblem.current) {
             if (!controller.signal.aborted && sequence.current === currentSequence) {
-              setWarning(`${locationProblem.current.message} Showing Jakarta-wide results instead.`);
+              setWarning(messages.locationFallback(messages.location[locationProblem.current]));
             }
           }
         }
-        const next = await fetchRecommendations(clean, controller.signal, userLocation.current || undefined);
+        const next = await fetchRecommendations(clean, locale, controller.signal, userLocation.current || undefined);
         if (sequence.current === currentSequence) {
           setData(next);
           setStatus("ready");
         }
       } catch (cause) {
         if (controller.signal.aborted) return;
-        setError(cause instanceof Error ? cause.message : "Could not refresh recommendations");
+        setError(cause instanceof LocationError ? messages.location[cause.code] : messages.refreshFailed);
         setStatus("error");
       }
     }, 350);
@@ -72,7 +76,7 @@ export function useRecommendations(query: string) {
       controller.abort();
       window.clearTimeout(timer);
     };
-  }, [query]);
+  }, [query, locale, messages]);
 
   const requirements = useMemo(
     () => data ? [

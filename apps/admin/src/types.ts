@@ -1,3 +1,11 @@
+export type ContributorRole = "contributor" | "owner";
+
+export type Contributor = {
+  email: string;
+  role: ContributorRole;
+  display_name: string;
+};
+
 export type EvidenceField = {
   id?: string;
   key: string;

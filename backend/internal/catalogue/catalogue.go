@@ -328,7 +328,7 @@ func (store *Store) ListPublished(ctx context.Context) ([]recommendation.Cafe, e
 		if cafe.Description == "" {
 			cafe.Description = "Published café evidence reviewed by the Where to WFC catalogue admin."
 		}
-		cafe.EvidenceSummary = fmt.Sprintf("%d verified signals · checked %d days ago", len(cafe.Evidence), cafe.FreshnessDays)
+		cafe.EvidenceSignals = len(cafe.Evidence)
 	}
 	return cafes, nil
 }

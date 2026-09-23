@@ -42,21 +42,23 @@ func (s *Service) CatalogueSize() int { return int(s.size.Load()) }
 
 func (s *Service) Recommend(ctx context.Context, request Request) Response {
 	started := time.Now()
+	locale := NormalizeLocale(request.Locale)
 	profile, err := s.interpreter.Interpret(ctx, request.Query)
 	if err != nil {
 		profile = InterpretDeterministically(request.Query)
-		profile.FallbackReason = "Jev was unavailable; deterministic interpretation used"
+		profile.FallbackReason = catalogFor(locale).fallbackReason
 	}
 	profile = enforceDeterministicConstraints(request.Query, profile)
 	profile = enforceLocationIntent(request.Query, profile)
 	profile = applyDefaultUserLocation(profile, request.UserLocation)
 	profile = normalizeInterpretationCollections(profile)
+	profile = localizeInterpretation(profile, locale)
 	cafes, catalogueErr := s.catalogue.ListPublished(ctx)
 	if catalogueErr != nil {
 		cafes = []Cafe{}
 	}
 	s.size.Store(int64(len(cafes)))
-	results := RankCafes(cafes, profile, request.UserLocation)
+	results := RankCafes(cafes, profile, request.UserLocation, locale)
 	if len(results) > request.Limit {
 		results = results[:request.Limit]
 	}
@@ -76,7 +78,8 @@ func normalizeInterpretationCollections(profile Interpretation) Interpretation {
 	return profile
 }
 
-func RankCafes(cafes []Cafe, profile Interpretation, userLocation *Point) []Recommendation {
+func RankCafes(cafes []Cafe, profile Interpretation, userLocation *Point, locale Locale) []Recommendation {
+	c := catalogFor(locale)
 	location := Point{Lat: -6.2088, Lng: 106.8456}
 	if userLocation != nil {
 		location = *userLocation
@@ -148,13 +151,13 @@ func RankCafes(cafes []Cafe, profile Interpretation, userLocation *Point) []Reco
 
 		caveats := append([]string{}, cafe.Caveats...)
 		if cafe.FreshnessDays > 60 {
-			caveats = append(caveats, fmt.Sprintf("Some evidence was last checked %d days ago", cafe.FreshnessDays))
+			caveats = append(caveats, fmt.Sprintf(c.staleCaveat, cafe.FreshnessDays))
 		}
 		if profile.Budget > 0 && cafe.PriceMax > profile.Budget {
-			caveats = append(caveats, "Some menu items may exceed your budget")
+			caveats = append(caveats, c.budgetCaveat)
 		}
 		if len(matched) == 0 {
-			matched = append(matched, "Good overall fit")
+			matched = append(matched, c.matchedFallback)
 		}
 		links := []ReviewLink{}
 		if cafe.ReviewURL != "" {
@@ -170,7 +173,7 @@ func RankCafes(cafes []Cafe, profile Interpretation, userLocation *Point) []Reco
 			MapsURL: mapsURL, ReviewLinks: links,
 			PriceMin: cafe.PriceMin, PriceMax: cafe.PriceMax, DistanceKM: math.Round(distance*10) / 10,
 			OpenUntil: cafe.OpenUntil, Open24Hours: cafe.Facts["open_24h"], FreshnessDays: cafe.FreshnessDays,
-			Description: cafe.Description, Accent: cafe.Accent, EvidenceSummary: cafe.EvidenceSummary,
+			Description: cafe.Description, Accent: cafe.Accent, EvidenceSummary: fmt.Sprintf(c.evidenceSummary, cafe.EvidenceSignals, cafe.FreshnessDays),
 			ScoreComponents: map[string]float64{"preference_fit": round(fuzzyFit), "facilities": round(facilityFit), "distance": round(distanceFit), "budget": round(budgetFit), "freshness": round(freshnessFit)},
 		})
 	}

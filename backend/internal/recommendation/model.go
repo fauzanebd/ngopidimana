@@ -9,6 +9,7 @@ type Request struct {
 	Query        string `json:"query"`
 	UserLocation *Point `json:"user_location,omitempty"`
 	Limit        int    `json:"limit"`
+	Locale       string `json:"locale,omitempty"`
 }
 
 type Requirement struct {
@@ -53,7 +54,7 @@ type Cafe struct {
 	FreshnessDays   int
 	Description     string
 	Accent          string
-	EvidenceSummary string
+	EvidenceSignals int
 }
 
 type ReviewLink struct {

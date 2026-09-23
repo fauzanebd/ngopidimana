@@ -23,25 +23,51 @@ type Server struct {
 	ingestion       *ingestion.Service
 	googlePlaces    GooglePlacesClient
 	health          HealthChecker
+	auth            AuthService
+	cookies         CookiePolicy
 }
 
-func NewServer(recommendations *recommendation.Service, ingestionService *ingestion.Service, googlePlaces GooglePlacesClient, health HealthChecker, corsOrigins string) http.Handler {
-	server := &Server{recommendations: recommendations, ingestion: ingestionService, googlePlaces: googlePlaces, health: health}
+// Options is everything NewServer needs. It is a struct rather than a parameter
+// list because the API surface keeps growing and positional arguments stopped
+// being readable.
+type Options struct {
+	Recommendations *recommendation.Service
+	Ingestion       *ingestion.Service
+	GooglePlaces    GooglePlacesClient
+	Health          HealthChecker
+	CORSOrigins     string
+	Auth            AuthService
+	Cookies         CookiePolicy
+}
+
+func NewServer(options Options) http.Handler {
+	server := &Server{
+		recommendations: options.Recommendations, ingestion: options.Ingestion, googlePlaces: options.GooglePlaces,
+		health: options.Health, auth: options.Auth, cookies: options.Cookies,
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", server.healthz)
 	mux.HandleFunc("POST /v1/recommendations", server.recommend)
-	mux.HandleFunc("GET /v1/admin/ingestion-runs", server.listIngestionRuns)
-	mux.HandleFunc("POST /v1/admin/ingestion-runs", server.createIngestionRun)
-	mux.HandleFunc("PATCH /v1/admin/ingestion-runs/{id}", server.updateIngestionRun)
-	mux.HandleFunc("DELETE /v1/admin/ingestion-runs/{id}", server.deleteIngestionRun)
-	mux.HandleFunc("GET /v1/admin/ingestion-runs/{id}/google-place", server.getGooglePlace)
-	mux.HandleFunc("POST /v1/admin/ingestion-runs/{id}/manual-evidence", server.addManualEvidence)
-	mux.HandleFunc("DELETE /v1/admin/ingestion-runs/{id}/manual-evidence/{evidenceID}", server.removeManualEvidence)
-	mux.HandleFunc("PATCH /v1/admin/ingestion-runs/{id}/evidence/{evidenceID}", server.replaceEvidence)
-	mux.HandleFunc("DELETE /v1/admin/ingestion-runs/{id}/evidence/{evidenceID}", server.excludeEvidence)
-	mux.HandleFunc("POST /v1/admin/ingestion-runs/{id}/evidence/{evidenceID}/restore", server.restoreEvidence)
-	mux.HandleFunc("POST /v1/admin/ingestion-runs/{id}/evidence/{evidenceID}/choose", server.chooseEvidence)
-	return withLogging(withCORS(corsOrigins, mux))
+	mux.HandleFunc("POST /v1/auth/request-link", server.requestLink)
+	mux.HandleFunc("POST /v1/auth/verify", server.verifyLogin)
+	mux.HandleFunc("GET /v1/auth/session", server.session)
+	mux.HandleFunc("POST /v1/auth/logout", server.logout)
+
+	admin := http.NewServeMux()
+	admin.HandleFunc("GET /v1/admin/ingestion-runs", server.listIngestionRuns)
+	admin.HandleFunc("POST /v1/admin/ingestion-runs", server.createIngestionRun)
+	admin.HandleFunc("PATCH /v1/admin/ingestion-runs/{id}", server.updateIngestionRun)
+	admin.HandleFunc("DELETE /v1/admin/ingestion-runs/{id}", server.deleteIngestionRun)
+	admin.HandleFunc("GET /v1/admin/ingestion-runs/{id}/google-place", server.getGooglePlace)
+	admin.HandleFunc("POST /v1/admin/ingestion-runs/{id}/manual-evidence", server.addManualEvidence)
+	admin.HandleFunc("DELETE /v1/admin/ingestion-runs/{id}/manual-evidence/{evidenceID}", server.removeManualEvidence)
+	admin.HandleFunc("PATCH /v1/admin/ingestion-runs/{id}/evidence/{evidenceID}", server.replaceEvidence)
+	admin.HandleFunc("DELETE /v1/admin/ingestion-runs/{id}/evidence/{evidenceID}", server.excludeEvidence)
+	admin.HandleFunc("POST /v1/admin/ingestion-runs/{id}/evidence/{evidenceID}/restore", server.restoreEvidence)
+	admin.HandleFunc("POST /v1/admin/ingestion-runs/{id}/evidence/{evidenceID}/choose", server.chooseEvidence)
+	mux.Handle("/v1/admin/", server.requireContributor(admin))
+
+	return withLogging(withCORS(options.CORSOrigins, mux))
 }
 
 func (s *Server) replaceEvidence(writer http.ResponseWriter, request *http.Request) {

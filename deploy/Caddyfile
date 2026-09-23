@@ -1,0 +1,81 @@
+# Caddyfile - single public ingress for this VPS.
+#
+# Run by the `caddy` service in deploy/compose.prod.yaml, which mounts this file
+# read-only at /etc/caddy/Caddyfile and publishes 80/443.
+#
+# Replace every occurrence of api.example.com with your real API hostname, then
+# make sure the DNS record exists and points at this server BEFORE the first
+# start (Caddy needs to complete the ACME HTTP-01/TLS-ALPN challenge):
+#
+#   sed -i 's/api\.example\.com/api.YOURDOMAIN.com/g' deploy/Caddyfile
+#
+# Certificates and ACME account keys live in the caddy_data volume, so they
+# survive `docker compose up -d --build`.
+{
+	# Uncomment to receive ACME expiry notices (an address is otherwise optional).
+	# email admin@example.com
+}
+
+api.example.com {
+	# Compress JSON responses; the recommendation payloads are large.
+	encode zstd gzip
+
+	# Liveness/readiness pass-through. Kept separate so that uptime monitors and
+	# `curl -i https://api.example.com/healthz` get an unbuffered answer.
+	handle /healthz {
+		reverse_proxy api:8080 {
+			flush_interval -1
+		}
+	}
+
+	# Everything else: the Go API container on the compose network.
+	# `api` here is the compose service name; Caddy and the API share the
+	# wfc-prod network, so no host port is involved.
+	handle {
+		reverse_proxy api:8080 {
+			# Timeouts sized for the recommendation endpoint: the query
+			# interpreter runs server-side and the API itself enforces a 15s
+			# write timeout, so give Caddy slightly more headroom.
+			transport http {
+				dial_timeout 5s
+				read_timeout 30s
+				write_timeout 30s
+			}
+			# Caddy-side health awareness of the upstream.
+			health_uri /healthz
+			health_interval 30s
+			health_timeout 5s
+
+			# Preserve the real client address for the API's request logs.
+			header_up X-Real-IP {remote_host}
+		}
+	}
+
+	log {
+		output stderr
+		format json
+	}
+}
+
+# ---------------------------------------------------------------------------
+# Adding a SECOND project to this same VPS (commented example)
+# ---------------------------------------------------------------------------
+# Rule: only this Caddy may bind host ports 80/443. A second compose project
+# must NOT publish 80/443, and should join this project's network instead:
+#
+#   # in /srv/otherproject/compose.yaml
+#   networks:
+#     edge:
+#       external: true
+#       name: wfc-prod
+#
+# Then give its service a stable container name (e.g. other-api) and add a site
+# below, reloading Caddy without downtime:
+#
+#   docker compose -f deploy/compose.prod.yaml exec caddy \
+#     caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
+#
+# app.example.com {
+# 	encode zstd gzip
+# 	reverse_proxy other-api:3000
+# }

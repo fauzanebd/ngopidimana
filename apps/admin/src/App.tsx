@@ -1,15 +1,30 @@
+import { Coffee, LoaderCircle } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { AdminHeader } from "./components/AdminHeader";
 import { AdminSidebar } from "./components/AdminSidebar";
 import { IngestionToolbar } from "./components/IngestionToolbar";
 import { ReviewPanel } from "./components/ReviewPanel";
 import { RunQueue } from "./components/RunQueue";
+import { SignInPanel } from "./components/SignInPanel";
 import { FILTERS } from "./constants";
 import { useIngestionRuns } from "./hooks/useIngestionRuns";
-import type { FilterKey, ManualEvidenceInput, RunAction } from "./types";
+import { useSession } from "./hooks/useSession";
+import type { Contributor, FilterKey, ManualEvidenceInput, RunAction } from "./types";
 
-function App() {
-  const { runs, loading, submitting, deletingID, savingEvidence, bulkBusy, notice, error, load, create, update, remove, publishMany, removeMany, addEvidence, removeEvidence, replaceEvidence, excludeEvidence, restoreEvidence, chooseEvidence } = useIngestionRuns();
+function App({ callbackToken = null }: { callbackToken?: string | null }) {
+  const session = useSession(callbackToken);
+
+  if (session.status === "checking") return <main className="grid min-h-screen place-items-center bg-paper text-ink">
+    <div className="flex flex-col items-center gap-4"><div className="grid h-11 w-11 place-items-center rounded-xl bg-moss text-white"><Coffee className="h-6 w-6" /></div><p className="flex items-center gap-2 text-xs text-ink/55"><LoaderCircle className="h-3.5 w-3.5 animate-spin" /> {callbackToken === null ? "Checking your session…" : "Signing you in…"}</p></div>
+  </main>;
+
+  if (session.status === "signed-out" || !session.contributor) return <SignInPanel signingIn={session.signingIn} error={session.signInError} sentTo={session.sentTo} onSignIn={session.signIn} onUseAnotherAddress={session.clearSentTo} />;
+
+  return <Dashboard contributor={session.contributor} onSignOut={session.signOut} />;
+}
+
+function Dashboard({ contributor, onSignOut }: { contributor: Contributor; onSignOut: () => Promise<void> }) {
+  const { runs, loading, submitting, deletingID, savingEvidence, bulkBusy, notice, error, load, create, update, remove, publishMany, removeMany, addEvidence, removeEvidence, replaceEvidence, excludeEvidence, restoreEvidence, chooseEvidence } = useIngestionRuns(() => void onSignOut());
   const [activeFilter, setActiveFilter] = useState<FilterKey>("needs_review");
   const [selectedID, setSelectedID] = useState<string | null>(null);
   const [selectionMode, setSelectionMode] = useState(false);
@@ -117,7 +132,7 @@ function App() {
   }
 
   return <main className="min-h-screen bg-paper text-ink">
-    <AdminHeader connected={!error} />
+    <AdminHeader connected={!error} contributor={contributor} onSignOut={onSignOut} />
     <div className="grid min-h-[calc(100vh-64px)] lg:grid-cols-[228px_minmax(0,1fr)]">
       <AdminSidebar runs={runs} active={activeFilter} onChange={changeFilter} />
       <section className="min-w-0">

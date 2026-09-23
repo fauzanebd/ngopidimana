@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { ApiError } from "../api/client";
 import * as ingestionAPI from "../api/ingestion";
 import type { ManualEvidenceInput, Run, RunAction } from "../types";
 
-export function useIngestionRuns() {
+export function useIngestionRuns(onUnauthorized?: () => void) {
   const [runs, setRuns] = useState<Run[]>([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -11,6 +12,18 @@ export function useIngestionRuns() {
   const [bulkBusy, setBulkBusy] = useState<"publish" | "delete" | null>(null);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
+  const unauthorized = useRef(onUnauthorized);
+  useEffect(() => { unauthorized.current = onUnauthorized; }, [onUnauthorized]);
+
+  // An expired session is not an ingestion failure: it hands the visitor back to sign-in.
+  function reportUnauthorized(cause: unknown) {
+    if (cause instanceof ApiError && cause.status === 401) { unauthorized.current?.(); return true; }
+    return false;
+  }
+
+  function fail(cause: unknown, fallback: string) {
+    if (!reportUnauthorized(cause)) setError(cause instanceof Error ? cause.message : fallback);
+  }
 
   const load = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
@@ -18,7 +31,7 @@ export function useIngestionRuns() {
       setRuns(await ingestionAPI.listRuns());
       setError("");
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not load the review queue");
+      fail(cause, "Could not load the review queue");
     } finally {
       if (!silent) setLoading(false);
     }
@@ -39,7 +52,7 @@ export function useIngestionRuns() {
       setNotice("Ingestion queued. The worker will attach evidence before review.");
       return run;
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not start ingestion");
+      fail(cause, "Could not start ingestion");
       return null;
     } finally { setSubmitting(false); }
   }
@@ -52,7 +65,7 @@ export function useIngestionRuns() {
       setNotice(action === "publish" ? `${next.name} is published.` : `Record moved to ${next.state.replace("_", " ")}.`);
       return next;
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not update record");
+      fail(cause, "Could not update record");
       return null;
     }
   }
@@ -65,7 +78,7 @@ export function useIngestionRuns() {
       setNotice(`${run.name} was permanently deleted.`);
       return true;
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not delete record");
+      fail(cause, "Could not delete record");
       return false;
     } finally { setDeletingID(null); }
   }
@@ -79,6 +92,7 @@ export function useIngestionRuns() {
         try {
           return { run: await ingestionAPI.updateRun(run.id, "publish"), failed: false as const, id: run.id, name: run.name, message: "" };
         } catch (cause) {
+          reportUnauthorized(cause);
           return { run: null, failed: true as const, id: run.id, name: run.name, message: cause instanceof Error ? cause.message : "Could not publish record" };
         }
       }));
@@ -107,6 +121,7 @@ export function useIngestionRuns() {
           await ingestionAPI.deleteRun(run.id);
           return { failed: false as const, id: run.id, name: run.name, message: "" };
         } catch (cause) {
+          reportUnauthorized(cause);
           return { failed: true as const, id: run.id, name: run.name, message: cause instanceof Error ? cause.message : "Could not delete record" };
         }
       }));
@@ -129,7 +144,7 @@ export function useIngestionRuns() {
       setNotice(`${input.key} was added as manually sourced evidence.`);
       return next;
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not add manual evidence");
+      fail(cause, "Could not add manual evidence");
       return null;
     } finally { setSavingEvidence(false); }
   }
@@ -142,7 +157,7 @@ export function useIngestionRuns() {
       setNotice("Manual evidence was removed.");
       return next;
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not remove manual evidence");
+      fail(cause, "Could not remove manual evidence");
       return null;
     } finally { setSavingEvidence(false); }
   }
@@ -155,7 +170,7 @@ export function useIngestionRuns() {
       setNotice(success);
       return next;
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not update evidence");
+      fail(cause, "Could not update evidence");
       return null;
     } finally { setSavingEvidence(false); }
   }

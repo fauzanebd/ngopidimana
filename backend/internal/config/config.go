@@ -38,11 +38,37 @@ type Config struct {
 	GooglePlacesRegion      string
 	GooglePlacesDefaultArea string
 	GooglePlacesTimeout     time.Duration
+	AdminAppURL             string
+	AdminSessionTTL         time.Duration
+	AdminCookieDomain       string
+	AdminCookieSameSite     string
+	SMTPHost                string
+	SMTPPort                int
+	SMTPUsername            string
+	SMTPPassword            string
+	SMTPFrom                string
+	SMTPTLS                 string
 }
 
 func Load() (Config, error) {
 	if _, err := LoadEnvFile(".env", "../.env", "../../.env"); err != nil {
 		return Config{}, err
+	}
+	adminSessionHours, err := envInt("ADMIN_SESSION_TTL_HOURS", 720)
+	if err != nil {
+		return Config{}, err
+	}
+	if adminSessionHours < 1 {
+		return Config{}, errors.New("ADMIN_SESSION_TTL_HOURS must be at least 1")
+	}
+	smtpPort, err := envInt("SMTP_PORT", 587)
+	if err != nil {
+		return Config{}, err
+	}
+	smtpHost := os.Getenv("SMTP_HOST")
+	smtpFrom := envOr("SMTP_FROM", os.Getenv("SMTP_USERNAME"))
+	if smtpHost != "" && smtpFrom == "" {
+		return Config{}, errors.New("SMTP_FROM (or SMTP_USERNAME) is required when SMTP_HOST is set")
 	}
 	redisDB, err := envInt("REDIS_DB", 0)
 	if err != nil {
@@ -118,6 +144,16 @@ func Load() (Config, error) {
 		GooglePlacesRegion:      envOr("GOOGLE_PLACES_REGION_CODE", "ID"),
 		GooglePlacesDefaultArea: envOr("GOOGLE_PLACES_DEFAULT_AREA", "Jakarta, Indonesia"),
 		GooglePlacesTimeout:     time.Duration(googlePlacesTimeoutSeconds) * time.Second,
+		AdminAppURL:             envOr("ADMIN_APP_URL", "http://localhost:5174"),
+		AdminSessionTTL:         time.Duration(adminSessionHours) * time.Hour,
+		AdminCookieDomain:       os.Getenv("ADMIN_COOKIE_DOMAIN"),
+		AdminCookieSameSite:     envOr("ADMIN_COOKIE_SAMESITE", "lax"),
+		SMTPHost:                smtpHost,
+		SMTPPort:                smtpPort,
+		SMTPUsername:            os.Getenv("SMTP_USERNAME"),
+		SMTPPassword:            os.Getenv("SMTP_PASSWORD"),
+		SMTPFrom:                smtpFrom,
+		SMTPTLS:                 envOr("SMTP_TLS", "starttls"),
 	}, nil
 }
 

@@ -3,6 +3,7 @@ package recommendation
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -21,7 +22,7 @@ func TestNamedAreaIsAHardGeographicConstraint(t *testing.T) {
 	results := RankCafes([]Cafe{
 		{ID: "cipete", Name: "Cipete Cafe", Area: "Cipete Selatan", Address: "Jl. Cipete Raya, Jakarta Selatan", Lat: -6.277, Lng: 106.801, Scores: map[string]float64{}, Evidence: map[string]float64{}, Facts: map[string]bool{}},
 		{ID: "tebet", Name: "Tebet Cafe", Area: "Tebet", Address: "Jl. Tebet Raya, Jakarta Selatan", Lat: -6.238, Lng: 106.851, Scores: map[string]float64{}, Evidence: map[string]float64{}, Facts: map[string]bool{}},
-	}, profile, nil)
+	}, profile, nil, LocaleEnglish)
 	if len(results) != 1 || results[0].PlaceID != "cipete" || profile.LocationMode != "named" {
 		t.Fatalf("Cipete query leaked results from another area: profile=%#v results=%#v", profile, results)
 	}
@@ -34,7 +35,7 @@ func TestJakselIncludesItsDistrictsAndExcludesJaktim(t *testing.T) {
 		{ID: "tebet", Name: "Tebet Cafe", Area: "Tebet", Address: "Jakarta Selatan", Lat: -6.238, Lng: 106.851, Scores: map[string]float64{}, Evidence: map[string]float64{}, Facts: map[string]bool{}},
 		{ID: "rawamangun", Name: "Rawamangun Cafe", Area: "Rawamangun", Address: "Jakarta Timur", Lat: -6.197, Lng: 106.891, Scores: map[string]float64{}, Evidence: map[string]float64{}, Facts: map[string]bool{}},
 		{ID: "duren-sawit", Name: "Duren Sawit Cafe", Area: "Duren Sawit", Address: "Jakarta Timur", Lat: -6.234, Lng: 106.925, Scores: map[string]float64{}, Evidence: map[string]float64{}, Facts: map[string]bool{}},
-	}, profile, nil)
+	}, profile, nil, LocaleEnglish)
 	if len(results) != 2 {
 		t.Fatalf("Jaksel should include Cipete/Tebet only: %#v", results)
 	}
@@ -51,7 +52,7 @@ func TestNearMeUsesUserPositionAndFiveKilometreRadius(t *testing.T) {
 	results := RankCafes([]Cafe{
 		{ID: "near", Name: "Near Cafe", Area: "Cipete", Lat: -6.278, Lng: 106.801, Scores: map[string]float64{}, Evidence: map[string]float64{}, Facts: map[string]bool{}},
 		{ID: "far", Name: "Far Cafe", Area: "Rawamangun", Lat: -6.197, Lng: 106.891, Scores: map[string]float64{}, Evidence: map[string]float64{}, Facts: map[string]bool{}},
-	}, profile, origin)
+	}, profile, origin, LocaleEnglish)
 	if !RequiresUserLocation("cafe sekitar saya") || len(results) != 1 || results[0].PlaceID != "near" {
 		t.Fatalf("near-me location filtering failed: profile=%#v results=%#v", profile, results)
 	}
@@ -64,7 +65,7 @@ func TestUnspecifiedLocationDefaultsToUserPosition(t *testing.T) {
 	results := RankCafes([]Cafe{
 		{ID: "near", Name: "Near Cafe", Area: "Cipete", Lat: -6.278, Lng: 106.801, Scores: map[string]float64{"quiet": .9}, Evidence: map[string]float64{}, Facts: map[string]bool{}},
 		{ID: "far", Name: "Far Cafe", Area: "Rawamangun", Lat: -6.197, Lng: 106.891, Scores: map[string]float64{"quiet": .9}, Evidence: map[string]float64{}, Facts: map[string]bool{}},
-	}, profile, origin)
+	}, profile, origin, LocaleEnglish)
 	if profile.LocationMode != "nearby" || profile.Location != "Near you" || len(results) != 1 || results[0].PlaceID != "near" {
 		t.Fatalf("location-less query did not default to nearby results: profile=%#v results=%#v", profile, results)
 	}
@@ -78,7 +79,7 @@ func TestUnspecifiedLocationDefaultsToUserPosition(t *testing.T) {
 
 func TestHardFiltersAreNeverViolated(t *testing.T) {
 	profile := InterpretDeterministically("WFC di Jaksel, wajib ada musholla dan harus ada matcha")
-	results := RankCafes(SeedCafes(), profile, nil)
+	results := RankCafes(SeedCafes(), profile, nil, LocaleEnglish)
 	for _, result := range results {
 		var found Cafe
 		for _, cafe := range SeedCafes() {
@@ -97,7 +98,7 @@ func TestOpen24HoursIsDistinctFromOpenLate(t *testing.T) {
 	profile := enforceDeterministicConstraints("harus 24 jam", Interpretation{
 		Location: "Blok M", SoftPreferences: []Requirement{{Key: "late", Label: "Open late", Kind: "soft"}},
 	})
-	results := RankCafes(SeedCafes(), profile, nil)
+	results := RankCafes(SeedCafes(), profile, nil, LocaleEnglish)
 	if len(results) != 2 || len(profile.HardConstraints) != 1 || profile.HardConstraints[0].Key != "open_24h" {
 		t.Fatalf("unexpected 24-hour result: profile=%#v results=%#v", profile, results)
 	}
@@ -105,6 +106,43 @@ func TestOpen24HoursIsDistinctFromOpenLate(t *testing.T) {
 		if !result.Open24Hours {
 			t.Fatalf("non-24-hour result returned: %#v", result)
 		}
+	}
+}
+
+func TestLocaleLocalizesGeneratedStrings(t *testing.T) {
+	service := NewService(deterministicInterpreter{}, staticCatalogue{cafes: SeedCafes()})
+	indonesian := service.Recommend(context.Background(), Request{Query: "WFC di Jaksel, wajib ada musholla", Limit: 15, Locale: "id"})
+
+	if len(indonesian.Interpretation.HardConstraints) != 1 || indonesian.Interpretation.HardConstraints[0].Label != "Musholla" {
+		t.Fatalf("hard constraint label was not localized: %#v", indonesian.Interpretation.HardConstraints)
+	}
+	soft := ""
+	for _, requirement := range indonesian.Interpretation.SoftPreferences {
+		if requirement.Key == "wfc" {
+			soft = requirement.Label
+		}
+	}
+	if soft != "Buat kerja" {
+		t.Fatalf("soft preference label was not localized: %#v", indonesian.Interpretation.SoftPreferences)
+	}
+	if !strings.Contains(indonesian.Interpretation.Summary, "wajib") || strings.Contains(indonesian.Interpretation.Summary, "must-have") {
+		t.Fatalf("summary was not localized: %q", indonesian.Interpretation.Summary)
+	}
+	if len(indonesian.Results) == 0 {
+		t.Fatalf("expected recommendations for the Indonesian request")
+	}
+	for _, result := range indonesian.Results {
+		if !strings.Contains(result.EvidenceSummary, "sinyal terverifikasi") {
+			t.Fatalf("evidence summary was not localized: %q", result.EvidenceSummary)
+		}
+	}
+
+	english := service.Recommend(context.Background(), Request{Query: "WFC di Jaksel, wajib ada musholla", Limit: 15, Locale: "en"})
+	if !strings.Contains(english.Interpretation.Summary, "must-have") {
+		t.Fatalf("English summary regressed: %q", english.Interpretation.Summary)
+	}
+	if english.Interpretation.HardConstraints[0].Label != "Musholla" {
+		t.Fatalf("English hard constraint label regressed: %#v", english.Interpretation.HardConstraints)
 	}
 }
 

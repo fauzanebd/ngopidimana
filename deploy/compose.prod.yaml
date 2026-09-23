@@ -1,0 +1,138 @@
+# Production stack for wheretowfc: Postgres/PostGIS + Redis + Go api + Go worker,
+# with Caddy on the same host as the single public ingress.
+#
+#   cd <repo root>
+#   docker compose -f deploy/compose.prod.yaml config -q      # validate
+#   docker compose -f deploy/compose.prod.yaml up -d --build  # run
+#
+# One project, one host: every container name is prefixed with "wfc-" and the
+# volumes and network are explicitly named, so nothing collides with other
+# compose projects on the same VPS.
+#
+# Datastores are never published: db/redis are reachable only from this network.
+# Only Caddy binds host ports (80/443). See deploy/README.md for the full runbook.
+
+name: wheretowfc
+
+services:
+  db:
+    image: postgis/postgis:16-3.4-alpine
+    container_name: wfc-db
+    restart: unless-stopped
+    # POSTGRES_DB / POSTGRES_USER / POSTGRES_PASSWORD are read from the same
+    # root .env file the API uses, so the database credentials have one source
+    # of truth (DATABASE_URL must be built from the same password).
+    env_file:
+      - ../.env
+    volumes:
+      - wfc_postgres_data:/var/lib/postgresql/data
+    # No `ports:` on purpose - the database is never exposed to the internet.
+    healthcheck:
+      # -h 127.0.0.1 forces a TCP check: pg_isready also answers on the unix
+      # socket of the temporary server initdb runs on a fresh volume.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 5432 -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    logging: &logging
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+    networks: [edge]
+
+  redis:
+    image: redis:7.4.11-alpine
+    container_name: wfc-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - wfc_redis_data:/data
+    # No `ports:` on purpose - Redis is internal to the compose network.
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    logging: *logging
+    networks: [edge]
+
+  api:
+    build:
+      # Build context is the repository root; the Dockerfile lives in backend/.
+      context: ..
+      dockerfile: backend/Dockerfile
+    image: wheretowfc-api:prod
+    container_name: wfc-api
+    restart: unless-stopped
+    env_file:
+      - ../.env
+    expose:
+      - "8080"
+    # No `ports:` on purpose - Caddy proxies api.<domain> to api:8080.
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    logging: *logging
+    networks: [edge]
+
+  worker:
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile
+    image: wheretowfc-api:prod
+    container_name: wfc-worker
+    restart: unless-stopped
+    # Same image, different entrypoint: the image ENTRYPOINT is /app/api, so the
+    # worker container overrides it. Any `docker run`-style override
+    # (`--entrypoint /app/contributors`) works the same way.
+    entrypoint: ["/app/worker"]
+    env_file:
+      - ../.env
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    logging: *logging
+    networks: [edge]
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: wfc-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - wfc_caddy_data:/data
+      - wfc_caddy_config:/config
+    depends_on:
+      - api
+    logging: *logging
+    networks: [edge]
+
+volumes:
+  wfc_postgres_data:
+    name: wfc-postgres-data
+  wfc_redis_data:
+    name: wfc-redis-data
+  wfc_caddy_data:
+    name: wfc-caddy-data
+  wfc_caddy_config:
+    name: wfc-caddy-config
+
+networks:
+  edge:
+    name: wfc-prod

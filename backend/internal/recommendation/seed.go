@@ -48,7 +48,7 @@ func SeedCafes() []Cafe {
 			Lat: item.lat, Lng: item.lng, PriceMin: item.min, PriceMax: item.max, OpenUntil: item.close,
 			Scores: item.scores, Evidence: evidence, Facts: facts, Tags: item.tags, FreshnessDays: item.fresh,
 			Description: item.description, Accent: item.accent,
-			EvidenceSummary: fmt.Sprintf("%d verified signals · checked %d days ago", len(facts)+len(item.scores), item.fresh),
+			EvidenceSignals: len(facts) + len(item.scores),
 		})
 	}
 	return out

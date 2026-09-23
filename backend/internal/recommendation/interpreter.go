@@ -137,7 +137,7 @@ func (j jevInterpreter) Interpret(ctx context.Context, query string) (Interpreta
 	sort.SliceStable(profile.HardConstraints, func(a, b int) bool { return profile.HardConstraints[a].Weight > profile.HardConstraints[b].Weight })
 	sort.SliceStable(profile.SoftPreferences, func(a, b int) bool { return profile.SoftPreferences[a].Weight > profile.SoftPreferences[b].Weight })
 	profile.Confidence = round(confidenceTotal / float64(included))
-	profile.Summary = interpretationSummary(profile)
+	profile.Summary = interpretationSummary(profile, LocaleEnglish)
 	return profile, nil
 }
 
@@ -184,7 +184,7 @@ func InterpretDeterministically(raw string) Interpretation {
 		profile.SoftPreferences = []Requirement{{Key: "wfc", Label: "WFC friendly", Kind: "soft", Weight: .84, Confidence: .72}, {Key: "quiet", Label: "Comfortable", Kind: "soft", Weight: .5, Confidence: .62}}
 		profile.Confidence = .7
 	}
-	profile.Summary = interpretationSummary(profile)
+	profile.Summary = interpretationSummary(profile, LocaleEnglish)
 	return profile
 }
 
@@ -195,7 +195,7 @@ func enforceDeterministicConstraints(raw string, profile Interpretation) Interpr
 	profile.HardConstraints = withoutRequirement(profile.HardConstraints, "open_24h", "late")
 	profile.SoftPreferences = withoutRequirement(profile.SoftPreferences, "open_24h", "late")
 	profile.HardConstraints = append(profile.HardConstraints, Requirement{Key: "open_24h", Label: "Open 24 hours", Kind: "hard", Weight: 1, Confidence: 1})
-	profile.Summary = interpretationSummary(profile)
+	profile.Summary = interpretationSummary(profile, LocaleEnglish)
 	return profile
 }
 
@@ -211,18 +211,6 @@ func withoutRequirement(requirements []Requirement, keys ...string) []Requiremen
 		}
 	}
 	return filtered
-}
-
-func interpretationSummary(profile Interpretation) string {
-	parts := []string{profile.Location}
-	if profile.Budget > 0 {
-		parts = append(parts, fmt.Sprintf("around Rp%dk", profile.Budget/1000))
-	}
-	if len(profile.HardConstraints) > 0 {
-		parts = append(parts, fmt.Sprintf("%d must-have", len(profile.HardConstraints)))
-	}
-	parts = append(parts, fmt.Sprintf("%d preference", len(profile.SoftPreferences)))
-	return strings.Join(parts, " · ")
 }
 
 func detectArea(query string) string {
