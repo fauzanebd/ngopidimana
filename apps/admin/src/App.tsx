@@ -7,6 +7,7 @@ import { ReviewPanel } from "./components/ReviewPanel";
 import { RunQueue } from "./components/RunQueue";
 import { SignInPanel } from "./components/SignInPanel";
 import { FILTERS } from "./constants";
+import { useApiHealth } from "./hooks/useApiHealth";
 import { useIngestionRuns } from "./hooks/useIngestionRuns";
 import { useSession } from "./hooks/useSession";
 import type { Contributor, FilterKey, ManualEvidenceInput, RunAction } from "./types";
@@ -24,7 +25,8 @@ function App({ callbackToken = null }: { callbackToken?: string | null }) {
 }
 
 function Dashboard({ contributor, onSignOut }: { contributor: Contributor; onSignOut: () => Promise<void> }) {
-  const { runs, loading, submitting, deletingID, savingEvidence, bulkBusy, notice, error, load, create, update, remove, publishMany, removeMany, addEvidence, removeEvidence, replaceEvidence, excludeEvidence, restoreEvidence, chooseEvidence } = useIngestionRuns(() => void onSignOut());
+  const { runs, loading, reconnecting, submitting, deletingID, savingEvidence, bulkBusy, notice, error, load, create, update, remove, publishMany, removeMany, addEvidence, removeEvidence, replaceEvidence, excludeEvidence, restoreEvidence, chooseEvidence } = useIngestionRuns(() => void onSignOut());
+  const apiHealthy = useApiHealth();
   const [activeFilter, setActiveFilter] = useState<FilterKey>("needs_review");
   const [selectedID, setSelectedID] = useState<string | null>(null);
   const [selectionMode, setSelectionMode] = useState(false);
@@ -132,11 +134,11 @@ function Dashboard({ contributor, onSignOut }: { contributor: Contributor; onSig
   }
 
   return <main className="min-h-screen bg-paper text-ink">
-    <AdminHeader connected={!error} contributor={contributor} onSignOut={onSignOut} />
+    <AdminHeader connected={apiHealthy} contributor={contributor} onSignOut={onSignOut} />
     <div className="grid min-h-[calc(100vh-64px)] lg:grid-cols-[228px_minmax(0,1fr)]">
       <AdminSidebar runs={runs} active={activeFilter} onChange={changeFilter} />
       <section className="min-w-0">
-        <IngestionToolbar submitting={submitting} notice={notice} error={error} onSubmit={submitURL} />
+        <IngestionToolbar submitting={submitting} notice={notice} error={reconnecting && error ? `${error} Retrying automatically…` : error} onSubmit={submitURL} />
         <div className="flex items-center gap-2 overflow-x-auto border-b border-ink/15 px-5 py-3 lg:hidden">{FILTERS.map(({ key, label }) => <button key={key} onClick={() => changeFilter(key)} className={`whitespace-nowrap rounded-md px-3 py-2 text-xs font-medium ${activeFilter === key ? "bg-moss text-white" : "border border-ink/15 bg-white/60"}`}>{label}</button>)}</div>
         <div className="grid min-h-[650px] xl:grid-cols-[390px_minmax(0,1fr)]">
           <RunQueue runs={visibleRuns} loading={loading} activeFilter={activeFilter} selectedID={selected?.id || null} selectionMode={selectionMode} selectedIDs={selectedIDs} bulkBusy={bulkBusy} onSelect={setSelectedID} onToggleSelection={toggleRecordSelection} onToggleSelectionMode={toggleSelectionMode} onToggleAll={toggleAllVisible} onBulkPublish={() => void publishSelection()} onBulkDelete={() => void deleteSelection()} onRefresh={() => void load()} />

@@ -6,6 +6,9 @@ const configured = import.meta.env.VITE_API_BASE_URL?.trim() || "";
 // Empty in development, where Vite proxies /v1 to the local API.
 export const apiBase = configured.replace(/\/+$/, "");
 
+const requestTimeoutMs = 15_000;
+const healthTimeoutMs = 5_000;
+
 export type ApiRequestInit = RequestInit & { errorMessage?: string };
 
 export class ApiError extends Error {
@@ -20,16 +23,42 @@ export class ApiError extends Error {
 
 function errorMessage(body: unknown, fallback: string) {
   if (body && typeof body === "object" && "error" in body) {
-    const error = (body as { error?: unknown }).error;
+    const { error } = body;
     if (typeof error === "string" && error) return error;
   }
   return fallback;
 }
 
+// A connection that blackholes — a DNS answer pointing at an unroutable address, a
+// dropped route — never rejects on its own, so without a deadline the queue sits on a
+// spinner forever and never reports anything. The timeout turns that into a failure the
+// UI can show and retry. status 0 marks "never reached the API" as distinct from an
+// HTTP error.
+function unreachable(cause: unknown) {
+  if (cause instanceof DOMException && cause.name === "TimeoutError") return `The API did not respond within ${requestTimeoutMs / 1000} seconds`;
+  return "Could not reach the API";
+}
+
 export async function request<T>(path: string, init: ApiRequestInit = {}): Promise<T> {
-  const { errorMessage: fallback = "The request failed", ...rest } = init;
-  const response = await fetch(`${apiBase}${path}`, { ...rest, credentials: "include" });
+  const { errorMessage: fallback = "The request failed", signal, ...rest } = init;
+  let response: Response;
+  try {
+    response = await fetch(`${apiBase}${path}`, { ...rest, credentials: "include", signal: signal ?? AbortSignal.timeout(requestTimeoutMs) });
+  } catch (cause) {
+    throw new ApiError(0, unreachable(cause));
+  }
   const body = response.status === 204 ? null : await response.json().catch(() => null);
   if (!response.ok) throw new ApiError(response.status, errorMessage(body, fallback));
   return body as T;
+}
+
+// The header's connectivity claim has to come from the API itself: "the last request did
+// not throw" is not the same thing, because a hung request throws nothing at all.
+export async function checkHealth(): Promise<boolean> {
+  try {
+    const response = await fetch(`${apiBase}/healthz`, { signal: AbortSignal.timeout(healthTimeoutMs), cache: "no-store" });
+    return response.ok;
+  } catch {
+    return false;
+  }
 }

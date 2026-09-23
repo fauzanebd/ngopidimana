@@ -12,6 +12,9 @@ export function useIngestionRuns(onUnauthorized?: () => void) {
   const [bulkBusy, setBulkBusy] = useState<"publish" | "delete" | null>(null);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
+  const [reconnecting, setReconnecting] = useState(false);
+  const retryTimer = useRef<number | null>(null);
+  const retryDelay = useRef(2_000);
   const unauthorized = useRef(onUnauthorized);
   useEffect(() => { unauthorized.current = onUnauthorized; }, [onUnauthorized]);
 
@@ -25,19 +28,32 @@ export function useIngestionRuns(onUnauthorized?: () => void) {
     if (!reportUnauthorized(cause)) setError(cause instanceof Error ? cause.message : fallback);
   }
 
-  const load = useCallback(async (silent = false) => {
+  const load = useCallback(async (silent = false): Promise<void> => {
     if (!silent) setLoading(true);
     try {
       setRuns(await ingestionAPI.listRuns());
       setError("");
+      setReconnecting(false);
+      retryDelay.current = 2_000;
+      if (retryTimer.current !== null) { window.clearTimeout(retryTimer.current); retryTimer.current = null; }
     } catch (cause) {
       fail(cause, "Could not load the review queue");
+      // Keep trying in the background. The failure this recovers from is usually the
+      // network rather than the API — a dead DNS answer or a dropped route clears itself
+      // up — and the queue should fill in on its own instead of needing a refresh.
+      if (retryTimer.current === null) {
+        const delay = retryDelay.current;
+        retryDelay.current = Math.min(delay * 2, 30_000);
+        setReconnecting(true);
+        retryTimer.current = window.setTimeout(() => { retryTimer.current = null; void load(true); }, delay);
+      }
     } finally {
       if (!silent) setLoading(false);
     }
   }, []);
 
   useEffect(() => { void load(); }, [load]);
+  useEffect(() => () => { if (retryTimer.current !== null) window.clearTimeout(retryTimer.current); }, []);
   useEffect(() => {
     if (!runs.some((run) => run.state === "enriching")) return;
     const timer = window.setInterval(() => void load(true), 1500);
@@ -191,5 +207,5 @@ export function useIngestionRuns(onUnauthorized?: () => void) {
     return mutateEvidence(run, ingestionAPI.chooseEvidence(run.id, evidenceID), "Conflict resolved using the selected value.");
   }
 
-  return { runs, loading, submitting, deletingID, savingEvidence, bulkBusy, notice, error, load, create, update, remove, publishMany, removeMany, addEvidence, removeEvidence, replaceEvidence, excludeEvidence, restoreEvidence, chooseEvidence };
+  return { runs, loading, reconnecting, submitting, deletingID, savingEvidence, bulkBusy, notice, error, load, create, update, remove, publishMany, removeMany, addEvidence, removeEvidence, replaceEvidence, excludeEvidence, restoreEvidence, chooseEvidence };
 }
