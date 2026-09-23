@@ -1,0 +1,16 @@
+{
+  "name": "where-to-wfc",
+  "private": true,
+  "packageManager": "pnpm@9.15.4",
+  "scripts": {
+    "dev": "pnpm --parallel --filter @wfc/web --filter @wfc/admin dev",
+    "dev:web": "pnpm --filter @wfc/web dev",
+    "dev:admin": "pnpm --filter @wfc/admin dev",
+    "dev:api": "go -C backend run ./cmd/api",
+    "dev:worker": "go -C backend run ./cmd/worker",
+    "infra:up": "docker compose up -d redis db",
+    "infra:down": "docker compose down",
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck"
+  }
+}
