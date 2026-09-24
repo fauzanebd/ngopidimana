@@ -82,6 +82,10 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 // second record for the same place — a duplicate crawl, or a re-ingest after the venue
 // changed — would otherwise let deleting the unrelated duplicate unpublish a live café.
 // The entry leaves the catalogue with the last record representing it, and not before.
+//
+// Listing every run answers this in one pass and is nothing at catalogue scale; if the
+// run store ever reaches thousands of records, this wants an index of Place ID to run
+// rather than a full scan on every delete.
 func (s *Service) anotherRecordExists(ctx context.Context, run Run) bool {
 	if strings.TrimSpace(run.GooglePlaceID) == "" {
 		return false

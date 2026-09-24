@@ -18,6 +18,10 @@ import type { Contributor, FilterKey, ManualEvidenceInput, PhotoOverride, Run, R
 // handler deletes exactly those — it never re-derives "the selected record" afterwards.
 type PendingDelete = { kind: "single"; run: Run } | { kind: "bulk"; runs: Run[] };
 
+// A submission held back because the queue already holds that URL. The match is captured with the
+// text when the dialog opens, so "Ingest anyway" creates exactly what was submitted.
+type PendingIngest = { url: string; existing: Run };
+
 function App({ callbackToken = null }: { callbackToken?: string | null }) {
   const session = useSession(callbackToken);
 
@@ -51,6 +55,8 @@ function Dashboard({ filter, runId, contributor, onSignOut }: { filter: FilterKe
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIDs, setSelectedIDs] = useState<Set<string>>(() => new Set());
   const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null);
+  const [pendingIngest, setPendingIngest] = useState<PendingIngest | null>(null);
+  const [urlInput, setURLInput] = useState("");
   const visibleRuns = useMemo(() => filter === "all" ? runs : runs.filter((run) => run.state === filter), [filter, runs]);
   // The record on screen is exactly the one the URL names. There is deliberately no fallback to
   // the first visible record: that fallback is how a click meant for one record used to land on
@@ -143,10 +149,44 @@ function Dashboard({ filter, runId, contributor, onSignOut }: { filter: FilterKe
     if (runId && targets.some((run) => run.id === runId) && !result.failedIDs.includes(runId)) navigate(`/${filterSlug(filter)}`, { replace: true });
   }
 
-  async function submitURL(url: string) {
+  async function createRun(url: string) {
     const run = await create(url);
-    if (run) navigate(`/enriching/${run.id}`);
+    if (run) {
+      setURLInput("");
+      navigate(`/enriching/${run.id}`);
+    }
     return run;
+  }
+
+  function submitURL(url: string) {
+    // Only one record per URL is worth paying for. The queue already holds every run, so the
+    // duplicate is caught here instead of being created and cleaned up later. The match is the
+    // canonical URL the API parsed, so an exact match is the ordinary case; stripping a trailing
+    // slash and folding case only absorbs what a person retyping the address adds.
+    const submitted = url.trim().replace(/\/$/, "").toLowerCase();
+    const existing = runs.find((run) => run.url.trim().replace(/\/$/, "").toLowerCase() === submitted);
+    if (existing) {
+      setPendingIngest({ url, existing });
+      return;
+    }
+    void createRun(url);
+  }
+
+  // "Ingest anyway" is a real second crawl with real second spend, so it happens only when asked.
+  async function ingestAnyway() {
+    const pending = pendingIngest;
+    if (!pending) return;
+    await createRun(pending.url);
+    setPendingIngest(null);
+  }
+
+  // The typed URL survives: the user came here to ingest it, and the existing record is where they
+  // can re-run extraction on it.
+  function openExistingRecord() {
+    const pending = pendingIngest;
+    if (!pending) return;
+    setPendingIngest(null);
+    navigate(`/${filterSlug(pending.existing.state)}/${pending.existing.id}`);
   }
 
   async function act(action: RunAction) {
@@ -195,7 +235,7 @@ function Dashboard({ filter, runId, contributor, onSignOut }: { filter: FilterKe
     <div className="grid min-h-[calc(100vh-64px)] lg:grid-cols-[228px_minmax(0,1fr)]">
       <AdminSidebar runs={runs} active={filter} onNavigate={leaveSelection} />
       <section className="min-w-0">
-        <IngestionToolbar submitting={submitting} notice={notice} error={reconnecting && error ? `${error} Retrying automatically…` : error} onSubmit={submitURL} />
+        <IngestionToolbar url={urlInput} submitting={submitting} notice={notice} error={reconnecting && error ? `${error} Retrying automatically…` : error} onChange={setURLInput} onSubmit={submitURL} />
         <div className="flex items-center gap-2 overflow-x-auto border-b border-ink/15 px-5 py-3 lg:hidden">{FILTERS.map(({ key, label }) => <Link key={key} to={`/${filterSlug(key)}`} onClick={leaveSelection} className={`focus-ring whitespace-nowrap rounded-md px-3 py-2 text-xs font-medium ${filter === key ? "bg-moss text-white" : "border border-ink/15 bg-white/60"}`}>{label}</Link>)}</div>
         <div className="grid min-h-[650px] xl:grid-cols-[390px_minmax(0,1fr)]">
           <RunQueue runs={visibleRuns} loading={loading} activeFilter={filter} selectedID={selected?.id || null} selectionMode={selectionMode} selectedIDs={selectedIDs} bulkBusy={bulkBusy} onToggleSelection={toggleRecordSelection} onToggleSelectionMode={toggleSelectionMode} onToggleAll={toggleAllVisible} onBulkPublish={() => void publishSelection()} onBulkDelete={requestBulkDelete} onRefresh={() => void load()} />
@@ -204,6 +244,17 @@ function Dashboard({ filter, runId, contributor, onSignOut }: { filter: FilterKe
       </section>
     </div>
     {deleteRequest ? <ConfirmDialog title={deleteRequest.title} description={deleteRequest.description} confirmLabel={deleteRequest.confirmLabel} busy={deletingPending} onConfirm={() => void confirmDelete()} onCancel={() => setPendingDelete(null)} /> : null}
+    {pendingIngest ? <ConfirmDialog
+      tone="default"
+      title={`“${pendingIngest.existing.name}” already has this URL`}
+      description={`A record for ${pendingIngest.url} is already in the queue, so ingesting it again would queue a second full crawl: every lookup and enrichment runs — and is paid for — twice, and the duplicate then has to be cleaned up by hand.\n\nOpen the existing record to re-run extraction on it instead.`}
+      confirmLabel="Ingest anyway"
+      secondaryLabel="Open the existing record"
+      busy={submitting}
+      onConfirm={() => void ingestAnyway()}
+      onSecondary={openExistingRecord}
+      onCancel={() => setPendingIngest(null)}
+    /> : null}
   </main>;
 }
 

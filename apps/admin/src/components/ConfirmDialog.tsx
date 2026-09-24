@@ -6,8 +6,17 @@ type Props = {
   title: string;
   description?: string;
   confirmLabel: string;
+  // An alternative to confirming, shown between Cancel and the primary action. It is the escape
+  // hatch for a decision that is not simply yes/no — "open the record that is already there"
+  // instead of either discarding the work or duplicating it.
+  secondaryLabel?: string;
   busy?: boolean;
+  // "danger" is the delete red and stays the default so every destructive dialog keeps its look.
+  // "default" is the moss primary the rest of the app uses, for a confirm that creates rather
+  // than destroys.
+  tone?: "danger" | "default";
   onConfirm: () => void;
+  onSecondary?: () => void;
   onCancel: () => void;
 };
 
@@ -19,9 +28,10 @@ type Props = {
 // It portals to the document body because the panel it is opened from runs an animation that
 // leaves a transform on an ancestor, which would otherwise capture position: fixed and pin the
 // overlay inside the panel instead of over the viewport.
-export function ConfirmDialog({ title, description, confirmLabel, busy = false, onConfirm, onCancel }: Props) {
+export function ConfirmDialog({ title, description, confirmLabel, secondaryLabel, busy = false, tone = "danger", onConfirm, onSecondary, onCancel }: Props) {
   const titleID = useId();
   const cancelButton = useRef<HTMLButtonElement>(null);
+  const danger = tone === "danger";
 
   // Cancel takes focus, never the destructive action: Enter should not be able to delete.
   useEffect(() => { cancelButton.current?.focus(); }, []);
@@ -44,7 +54,8 @@ export function ConfirmDialog({ title, description, confirmLabel, busy = false, 
         {description ? <p className="mt-3 whitespace-pre-line text-sm leading-6 text-ink/60">{description}</p> : null}
         <div className="mt-5 flex items-center justify-end gap-2">
           <button ref={cancelButton} type="button" disabled={busy} onClick={onCancel} className="focus-ring h-9 rounded-lg border border-ink/15 bg-white/60 px-3 text-xs font-medium transition hover:bg-cream disabled:opacity-40">Cancel</button>
-          <button type="button" disabled={busy} onClick={onConfirm} className="focus-ring inline-flex h-9 items-center gap-1.5 rounded-lg bg-red-700 px-3 text-xs font-semibold text-white transition hover:bg-red-800 disabled:opacity-40">{busy ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />} {confirmLabel}</button>
+          {secondaryLabel ? <button type="button" disabled={busy} onClick={onSecondary} className="focus-ring h-9 rounded-lg border border-ink/15 bg-white/60 px-3 text-xs font-medium transition hover:bg-cream disabled:opacity-40">{secondaryLabel}</button> : null}
+          <button type="button" disabled={busy} onClick={onConfirm} className={`focus-ring inline-flex h-9 items-center gap-1.5 rounded-lg px-3 text-xs font-semibold text-white transition disabled:opacity-40 ${danger ? "bg-red-700 hover:bg-red-800" : "bg-moss hover:bg-[#203d2b]"}`}>{busy ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : danger ? <Trash2 className="h-3.5 w-3.5" /> : null} {confirmLabel}</button>
         </div>
       </div>
     </div>,
