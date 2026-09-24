@@ -137,7 +137,7 @@ The online path uses the PRD-specified `github.com/atharvamhaske/typesafe-sdk-go
 ## Ingestion API
 
 - `GET /v1/admin/ingestion-runs`
-- `POST /v1/admin/ingestion-runs` with `{ "url": "https://…" }`
+- `POST /v1/admin/ingestion-runs` with `{ "url": "https://…" }`, or `{ "url": "https://…", "force": true }` to re-crawl a URL that already has a record. Answers `202` with the new record, `409` with the existing record when one exists, or `400` for a URL that is not a usable `http(s)` source.
 - `PATCH /v1/admin/ingestion-runs/{id}` with `review`, `publish`, `refresh`, or `archive`
 - `DELETE /v1/admin/ingestion-runs/{id}`
 - `GET /v1/admin/ingestion-runs/{id}/google-place` — uncached live Google Place Details for admin display
@@ -152,7 +152,7 @@ The current extractor supports ordinary server-rendered HTML metadata, JSON-LD, 
 
 Clicking **Publish** transactionally projects the reviewed record, provenance, evidence, facts, scores, links, menu items, and location into Postgres. The recommendation service reads only those published rows; it does not serve the fictional development seed catalogue. Publishing is rejected when identity, stable Google Place ID, area, address, or coordinates are missing. Archiving or deleting the admin record also removes a previously published catalogue place from search — unless another record still represents the same place, in which case the entry stays live and leaves the catalogue with the last record referencing it. Manual evidence is clearly marked `Manually added`; changing it returns a published record to review so you explicitly republish the revision. Sourced evidence is never silently rewritten: an admin can select a winning value, exclude/restore an item, or create a manual correction while retaining the original in the audit trail.
 
-**Submitting the same URL twice is not deduplicated.** A run ID is random and nothing compares URLs, so a second submission becomes an independent record with its own crawl and its own provider spend. Both can be reviewed and published; because the catalogue is keyed on the Google Place ID, the place still appears once and the most recent publish wins outright — publishing the weaker of the two replaces the better data. The admin therefore checks the URL against existing records before queueing anything and offers to open the existing record instead, which is also how a place is re-crawled deliberately.
+**Submitting the same URL twice is refused, not silently duplicated.** `POST /v1/admin/ingestion-runs` answers `409` when a record already exists for that URL, and the body carries the record that exists (`{ "error": "…", "existing": {…} }`) so the caller can open it instead. The admin uses exactly that: the dialog offers the existing record, and **Ingest anyway** re-posts with `"force": true`. The check runs on the server because a client cannot be trusted with it — a tab left open across a deploy has no duplicate check at all, and a second submission during the first round trip has a queue that does not yet contain the first record. Both of those produced real duplicate crawls. A deliberate duplicate is still possible, and is still a second full crawl with its own provider spend; because the catalogue is keyed on the Google Place ID, the place still appears once and the most recent publish wins outright — publishing the weaker of the two replaces the better data.
 
 JavaScript-only pages, PDFs, images/OCR, and TikTok audio/video analysis remain separate provider milestones.
 

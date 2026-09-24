@@ -77,7 +77,7 @@ func (discoverer fakeDiscoverer) Discover(context.Context, DiscoverySeed) ([]Dis
 func TestCreateQueuesDurableRun(t *testing.T) {
 	store, queue := NewMemoryStore(), &fakeQueue{}
 	service := NewService(store, queue)
-	run, err := service.Create(t.Context(), "https://example.com/cafe")
+	run, err := service.Create(t.Context(), "https://example.com/cafe", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,10 +89,59 @@ func TestCreateQueuesDurableRun(t *testing.T) {
 	}
 }
 
+func TestCreateRefusesADuplicateURL(t *testing.T) {
+	store, queue := NewMemoryStore(), &fakeQueue{}
+	service := NewService(store, queue)
+	first, err := service.Create(t.Context(), "https://example.com/cafe", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A trailing slash is the same page, and a tab left open across a deploy submits it
+	// without any check of its own — the refusal cannot depend on the caller having one.
+	second, err := service.Create(t.Context(), "https://example.com/cafe/", false)
+	var duplicate ErrDuplicateURL
+	if !errors.As(err, &duplicate) {
+		t.Fatalf("a duplicate URL should be refused: run=%#v err=%v", second, err)
+	}
+	if duplicate.Existing.ID != first.ID {
+		t.Fatalf("the refusal must carry the existing record: %#v", duplicate.Existing)
+	}
+	runs, err := store.List(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 1 {
+		t.Fatalf("a refused duplicate must not be stored: %#v", runs)
+	}
+}
+
+func TestCreateForcedQueuesASecondCrawl(t *testing.T) {
+	store, queue := NewMemoryStore(), &fakeQueue{}
+	service := NewService(store, queue)
+	first, err := service.Create(t.Context(), "https://example.com/cafe", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := service.Create(t.Context(), "https://example.com/cafe", true)
+	if err != nil {
+		t.Fatalf("force must still queue the crawl the admin asked for: %v", err)
+	}
+	if second.ID == first.ID || queue.runID != second.ID {
+		t.Fatalf("a forced duplicate needs its own queued record: run=%#v queue=%#v", second, queue)
+	}
+	runs, err := store.List(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 2 {
+		t.Fatalf("a forced duplicate should be stored: %#v", runs)
+	}
+}
+
 func TestDeletePermanentlyRemovesRun(t *testing.T) {
 	store := NewMemoryStore()
 	service := NewService(store, &fakeQueue{})
-	run, err := service.Create(t.Context(), "https://example.com/cafe")
+	run, err := service.Create(t.Context(), "https://example.com/cafe", false)
 	if err != nil {
 		t.Fatal(err)
 	}

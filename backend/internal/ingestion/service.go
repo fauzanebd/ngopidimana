@@ -301,10 +301,31 @@ func normalizeRunEvidence(run Run) Run {
 	return run
 }
 
-func (s *Service) Create(ctx context.Context, rawURL string) (Run, error) {
+// ErrDuplicateURL reports that a record already exists for the submitted URL.
+//
+// It carries the existing record because the caller's useful response is that record,
+// not the failure: the admin offers to open it instead of queueing a second crawl.
+type ErrDuplicateURL struct{ Existing Run }
+
+func (err ErrDuplicateURL) Error() string {
+	return fmt.Sprintf("a record for %s already exists", err.Existing.URL)
+}
+
+func (s *Service) Create(ctx context.Context, rawURL string, force bool) (Run, error) {
 	parsed, err := parseSourceURL(rawURL)
 	if err != nil {
 		return Run{}, err
+	}
+	// The client checks this too, to avoid the round trip, but the client can be stale or
+	// out of date in a tab left open across a deploy, so the refusal has to live here.
+	if !force {
+		existing, found, err := s.findByURL(ctx, parsed.String())
+		if err != nil {
+			return Run{}, err
+		}
+		if found {
+			return Run{}, ErrDuplicateURL{Existing: existing}
+		}
 	}
 	now := time.Now().UTC()
 	run := Run{
@@ -323,6 +344,28 @@ func (s *Service) Create(ctx context.Context, rawURL string) (Run, error) {
 		return Run{}, err
 	}
 	return run, nil
+}
+
+// findByURL returns the most recent record for an already-canonical URL. A trailing slash is
+// folded so that "/cafe" and "/cafe/" — the same page — are treated as the same record; the
+// stored URL itself is never rewritten.
+func (s *Service) findByURL(ctx context.Context, canonical string) (Run, bool, error) {
+	runs, err := s.store.List(ctx)
+	if err != nil {
+		return Run{}, false, err
+	}
+	target := strings.TrimSuffix(canonical, "/")
+	var newest Run
+	found := false
+	for _, candidate := range runs {
+		if strings.TrimSuffix(candidate.URL, "/") != target {
+			continue
+		}
+		if !found || candidate.CreatedAt.After(newest.CreatedAt) {
+			newest, found = candidate, true
+		}
+	}
+	return newest, found, nil
 }
 
 func (s *Service) Update(ctx context.Context, id, action string) (Run, error) {

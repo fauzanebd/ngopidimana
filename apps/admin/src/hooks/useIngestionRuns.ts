@@ -3,6 +3,18 @@ import { ApiError } from "../api/client";
 import * as ingestionAPI from "../api/ingestion";
 import type { ManualEvidenceInput, PhotoOverride, Run, RunAction } from "../types";
 
+// The API refuses a second crawl of a URL it already holds, and its 409 carries the record
+// that exists. Only trusted when it actually looks like a run: a proxy or a captive portal
+// can answer 409 with anything at all, and that must read as a failure, not as a record.
+function refusedDuplicate(cause: unknown): Run | null {
+  if (!(cause instanceof ApiError) || cause.status !== 409) return null;
+  const body = cause.body as { existing?: Run } | null;
+  if (!body || typeof body !== "object") return null;
+  const { existing } = body;
+  if (!existing || typeof existing !== "object" || typeof existing.id !== "string") return null;
+  return existing;
+}
+
 export function useIngestionRuns(onUnauthorized?: () => void) {
   const [runs, setRuns] = useState<Run[]>([]);
   const [loading, setLoading] = useState(true);
@@ -60,14 +72,18 @@ export function useIngestionRuns(onUnauthorized?: () => void) {
     return () => window.clearInterval(timer);
   }, [runs, load]);
 
-  async function create(url: string) {
+  // A refused duplicate is not an error to report: it is the answer, and it carries the
+  // record the admin should open instead. Only a genuine failure reaches the error banner.
+  async function create(url: string, force = false): Promise<{ run: Run } | { duplicate: Run } | null> {
     setSubmitting(true); setError(""); setNotice("");
     try {
-      const run = await ingestionAPI.createRun(url);
+      const run = await ingestionAPI.createRun(url, force);
       setRuns((current) => [run, ...current]);
       setNotice("Ingestion queued. The worker will attach evidence before review.");
-      return run;
+      return { run };
     } catch (cause) {
+      const duplicate = refusedDuplicate(cause);
+      if (duplicate) return { duplicate };
       fail(cause, "Could not start ingestion");
       return null;
     } finally { setSubmitting(false); }

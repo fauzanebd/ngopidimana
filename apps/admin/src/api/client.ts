@@ -13,11 +13,16 @@ export type ApiRequestInit = RequestInit & { errorMessage?: string };
 
 export class ApiError extends Error {
   readonly status: number;
+  // Some failures carry the useful answer rather than just a reason — a refused duplicate
+  // arrives with the record that already exists. Untyped because only the endpoint that
+  // raises it knows the shape; the caller that asked for it does.
+  readonly body: unknown;
 
-  constructor(status: number, message: string) {
+  constructor(status: number, message: string, body: unknown = null) {
     super(message);
     this.name = "ApiError";
     this.status = status;
+    this.body = body;
   }
 }
 
@@ -59,7 +64,7 @@ export async function request<T>(path: string, init: ApiRequestInit = {}): Promi
     // transit (a proxy or connection dropping the body mid-flight).
     throw new ApiError(response.status, response.ok ? "The API response was cut short" : fallback);
   }
-  if (!response.ok) throw new ApiError(response.status, errorMessage(body, fallback));
+  if (!response.ok) throw new ApiError(response.status, errorMessage(body, fallback), body);
   return body as T;
 }
 

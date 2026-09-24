@@ -15,11 +15,11 @@ export async function listRuns(): Promise<Run[]> {
   return body.runs;
 }
 
-export async function createRun(url: string): Promise<Run> {
+export async function createRun(url: string, force = false): Promise<Run> {
   return ingest<Run>("/v1/admin/ingestion-runs", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ url }),
+    body: JSON.stringify({ url, force }),
   });
 }
 

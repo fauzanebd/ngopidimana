@@ -149,20 +149,26 @@ function Dashboard({ filter, runId, contributor, onSignOut }: { filter: FilterKe
     if (runId && targets.some((run) => run.id === runId) && !result.failedIDs.includes(runId)) navigate(`/${filterSlug(filter)}`, { replace: true });
   }
 
-  async function createRun(url: string) {
-    const run = await create(url);
-    if (run) {
+  async function createRun(url: string, force = false) {
+    const result = await create(url, force);
+    if (result && "run" in result) {
       setURLInput("");
-      navigate(`/enriching/${run.id}`);
+      navigate(`/enriching/${result.run.id}`);
+    } else if (result && "duplicate" in result) {
+      // The server refused it and handed back the record that exists. Showing the dialog
+      // here is what makes the guard work in a tab that has been open across a deploy.
+      setPendingIngest({ url, existing: result.duplicate });
     }
-    return run;
+    return result;
   }
 
   function submitURL(url: string) {
-    // Only one record per URL is worth paying for. The queue already holds every run, so the
-    // duplicate is caught here instead of being created and cleaned up later. The match is the
-    // canonical URL the API parsed, so an exact match is the ordinary case; stripping a trailing
-    // slash and folding case only absorbs what a person retyping the address adds.
+    // One submission at a time. The button is disabled while submitting, but the input is
+    // not, and a second Enter during the first round trip queued a second crawl.
+    if (submitting) return;
+    // Fast path: the queue already holds this URL, so the dialog opens without a round
+    // trip. The API refuses the duplicate regardless — this list can be stale, and a stale
+    // list is exactly how the same URL got ingested twice.
     const submitted = url.trim().replace(/\/$/, "").toLowerCase();
     const existing = runs.find((run) => run.url.trim().replace(/\/$/, "").toLowerCase() === submitted);
     if (existing) {
@@ -172,11 +178,12 @@ function Dashboard({ filter, runId, contributor, onSignOut }: { filter: FilterKe
     void createRun(url);
   }
 
-  // "Ingest anyway" is a real second crawl with real second spend, so it happens only when asked.
+  // "Ingest anyway" is a real second crawl with real second spend, so it happens only when
+  // asked — and it has to say so, because the API refuses a duplicate by default.
   async function ingestAnyway() {
     const pending = pendingIngest;
     if (!pending) return;
-    await createRun(pending.url);
+    await createRun(pending.url, true);
     setPendingIngest(null);
   }
 

@@ -235,13 +235,23 @@ func (s *Server) listIngestionRuns(writer http.ResponseWriter, request *http.Req
 func (s *Server) createIngestionRun(writer http.ResponseWriter, request *http.Request) {
 	var body struct {
 		URL string `json:"url"`
+		// force re-runs a URL that already has a record. The admin asks for it explicitly,
+		// from the dialog that explains the duplicate spend.
+		Force bool `json:"force"`
 	}
 	if err := decodeJSON(request, &body); err != nil {
 		writeError(writer, http.StatusBadRequest, err.Error())
 		return
 	}
-	run, err := s.ingestion.Create(request.Context(), body.URL)
+	run, err := s.ingestion.Create(request.Context(), body.URL, body.Force)
 	if err != nil {
+		// A duplicate is not a failure to decode from a message: the response carries the
+		// record that already exists, which is what the caller actually needs.
+		var duplicate ingestion.ErrDuplicateURL
+		if errors.As(err, &duplicate) {
+			writeJSON(writer, http.StatusConflict, map[string]any{"error": duplicate.Error(), "existing": duplicate.Existing})
+			return
+		}
 		status := http.StatusServiceUnavailable
 		if strings.Contains(err.Error(), "valid http") || strings.Contains(err.Error(), "credentials") {
 			status = http.StatusBadRequest
