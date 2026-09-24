@@ -22,6 +22,27 @@ type PendingDelete = { kind: "single"; run: Run } | { kind: "bulk"; runs: Run[] 
 // text when the dialog opens, so "Ingest anyway" creates exactly what was submitted.
 type PendingIngest = { url: string; existing: Run };
 
+// submissionKey mirrors the API's identity rule (see duplicateKey in the ingestion service) so the
+// dialog opens without a round trip. It is only an optimisation: when the two ever disagree, the
+// API still refuses the duplicate, and this just costs one request.
+function submissionKey(raw: string) {
+  const trimmed = raw.trim().replace(/\/+$/, "");
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    return trimmed;
+  }
+  // Host case is insignificant, path case is not — the API compares the same way, and a key
+  // that folds more than the API does would prompt about records that are genuinely different.
+  const origin = parsed.origin.toLowerCase();
+  const path = parsed.pathname.replace(/\/+$/, "");
+  // A Maps short link carries its identity in the path token, and the share sheet appends a
+  // tracking query — the same café pasted from a phone must not look like a new URL.
+  if (parsed.hostname.toLowerCase() === "maps.app.goo.gl" || parsed.hostname.toLowerCase() === "goo.gl") return `${origin}${path}`;
+  return `${origin}${path}${parsed.search}`;
+}
+
 function App({ callbackToken = null }: { callbackToken?: string | null }) {
   const session = useSession(callbackToken);
 
@@ -169,8 +190,8 @@ function Dashboard({ filter, runId, contributor, onSignOut }: { filter: FilterKe
     // Fast path: the queue already holds this URL, so the dialog opens without a round
     // trip. The API refuses the duplicate regardless — this list can be stale, and a stale
     // list is exactly how the same URL got ingested twice.
-    const submitted = url.trim().replace(/\/$/, "").toLowerCase();
-    const existing = runs.find((run) => run.url.trim().replace(/\/$/, "").toLowerCase() === submitted);
+    const submitted = submissionKey(url);
+    const existing = runs.find((run) => submissionKey(run.url) === submitted);
     if (existing) {
       setPendingIngest({ url, existing });
       return;
