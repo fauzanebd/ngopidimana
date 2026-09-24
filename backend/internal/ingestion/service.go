@@ -68,12 +68,37 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	if s.publisher != nil {
+	if s.publisher != nil && !s.anotherRecordExists(ctx, run) {
 		if err := s.publisher.Remove(ctx, run); err != nil {
 			return fmt.Errorf("remove catalogue record: %w", err)
 		}
 	}
 	return s.store.Delete(ctx, id)
+}
+
+// anotherRecordExists reports whether any other record still represents this run's place.
+//
+// The catalogue row is keyed on the Google Place ID rather than on the record, so a
+// second record for the same place — a duplicate crawl, or a re-ingest after the venue
+// changed — would otherwise let deleting the unrelated duplicate unpublish a live café.
+// The entry leaves the catalogue with the last record representing it, and not before.
+func (s *Service) anotherRecordExists(ctx context.Context, run Run) bool {
+	if strings.TrimSpace(run.GooglePlaceID) == "" {
+		return false
+	}
+	runs, err := s.store.List(ctx)
+	if err != nil {
+		// Keep the place published when the check cannot be answered: skipping an
+		// unpublish is recoverable by removing the remaining record, an unrequested
+		// unpublish is not.
+		return true
+	}
+	for _, candidate := range runs {
+		if candidate.ID != run.ID && candidate.GooglePlaceID == run.GooglePlaceID {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Service) AddManualEvidence(ctx context.Context, id string, input ManualEvidenceInput) (Run, error) {
@@ -335,7 +360,7 @@ func (s *Service) Update(ctx context.Context, id, action string) (Run, error) {
 		}
 		return run, nil
 	case "archive":
-		if s.publisher != nil {
+		if s.publisher != nil && !s.anotherRecordExists(ctx, run) {
 			if err := s.publisher.Remove(ctx, run); err != nil {
 				return Run{}, fmt.Errorf("remove catalogue record: %w", err)
 			}

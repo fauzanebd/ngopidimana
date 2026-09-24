@@ -19,8 +19,9 @@ func (queue *fakeQueue) Enqueue(_ context.Context, runID, sourceURL string) erro
 }
 
 type fakePublisher struct {
-	run Run
-	err error
+	run     Run
+	err     error
+	removed bool
 }
 
 func (publisher *fakePublisher) Publish(_ context.Context, run Run) error {
@@ -30,6 +31,7 @@ func (publisher *fakePublisher) Publish(_ context.Context, run Run) error {
 
 func (publisher *fakePublisher) Remove(_ context.Context, run Run) error {
 	publisher.run = run
+	publisher.removed = true
 	return publisher.err
 }
 
@@ -136,6 +138,55 @@ func TestManualEvidenceCanBeAddedRemovedAndRequiresRepublish(t *testing.T) {
 	updated, err = service.RemoveManualEvidence(t.Context(), run.ID, updated.Fields[1].ID)
 	if err != nil || len(updated.Fields) != 1 {
 		t.Fatalf("manual evidence was not removed: run=%#v err=%v", updated, err)
+	}
+}
+
+func TestDeletingOneOfTwoRecordsForAPlaceKeepsItPublished(t *testing.T) {
+	store := NewMemoryStore()
+	publisher := &fakePublisher{}
+	service := NewService(store, &fakeQueue{}, publisher)
+	for _, id := range []string{"ing_first", "ing_second"} {
+		run := Run{ID: id, State: "needs_review", GooglePlaceID: "place-shared", Issues: []string{}, Fields: []EvidenceField{}}
+		if err := store.Save(t.Context(), run); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := service.Delete(t.Context(), "ing_first"); err != nil {
+		t.Fatal(err)
+	}
+	if publisher.removed {
+		t.Fatal("deleting one of two records for the same place must not unpublish it")
+	}
+	if _, err := store.Get(t.Context(), "ing_first"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("the deleted record should still be gone: %v", err)
+	}
+	if err := service.Delete(t.Context(), "ing_second"); err != nil {
+		t.Fatal(err)
+	}
+	if !publisher.removed {
+		t.Fatal("deleting the last record for a place must unpublish it")
+	}
+}
+
+func TestArchivingOneOfTwoRecordsForAPlaceKeepsItPublished(t *testing.T) {
+	store := NewMemoryStore()
+	publisher := &fakePublisher{}
+	service := NewService(store, &fakeQueue{}, publisher)
+	for _, id := range []string{"ing_keep", "ing_archived"} {
+		run := Run{ID: id, State: "needs_review", GooglePlaceID: "place-shared", Issues: []string{}, Fields: []EvidenceField{}}
+		if err := store.Save(t.Context(), run); err != nil {
+			t.Fatal(err)
+		}
+	}
+	archived, err := service.Update(t.Context(), "ing_archived", "archive")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if archived.State != "archived" {
+		t.Fatalf("archive should still archive the record: %#v", archived)
+	}
+	if publisher.removed {
+		t.Fatal("archiving one of two records for the same place must not unpublish it")
 	}
 }
 
