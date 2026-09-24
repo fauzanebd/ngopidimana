@@ -32,6 +32,11 @@
 	# Compress JSON responses; the recommendation payloads are large.
 	encode zstd gzip
 
+	# Tell browsers to drop any cached HTTP/3 alternative for this host. Without it a
+	# client that learned about h3 keeps using it for the advertised lifetime (which
+	# was 30 days) and would keep seeing the truncated responses it caused.
+	header Alt-Svc clear
+
 	# Liveness/readiness pass-through. Kept separate so that uptime monitors and
 	# `curl -i https://api.example.com/healthz` get an unbuffered answer.
 	handle /healthz {
