@@ -104,6 +104,26 @@ docker compose config --quiet
 }
 ```
 
+Every result carries `google_place_id` when the published place has one, which is what the card uses to ask for a photo.
+
+`GET /v1/places/{google_place_id}/photo`
+
+```json
+{
+  "photo_url": "https://lh3.googleusercontent.com/…",
+  "attribution": { "name": "Tika Anggi", "uri": "https://maps.google.com/maps/contrib/…" }
+}
+```
+
+Answers `404` when the place has no photo or Google rejects the id, and `503` when Google Places is unconfigured. The card falls back to its generated art in every one of those cases, so none of them is an error the UI shows.
+
+**Two properties of this endpoint are deliberate — do not "optimise" them away:**
+
+1. **The image bytes never pass through this service.** `photo_url` points at Google, and the browser loads it directly. Google's Places policies forbid pre-fetching, caching, or storing place content (photos included); only `place_id` may be kept indefinitely. Downloading photos into our storage or a CDN would breach that, so the API resolves a URL and nothing more. The in-process cache holds a resolved *URL* for 10 minutes purely to avoid a second round trip — never image data.
+2. **The attribution is not decoration.** Google requires the photo's author to be credited wherever the photo appears, and the URL is short-lived, so the card must keep handling a photo that stops loading (it reverts to its gradient art).
+
+Each uncached request costs one Place Details call plus one Place Photos call, which is why the URL is cached and why the frontend asks per card rather than for the whole result set.
+
 `locale` is optional and defaults to `en`. It accepts `en` or `id` (case-insensitive, region suffix ignored) and selects the language of the strings the service generates: requirement labels, the interpretation summary, `matched_on`, generated caveats, the evidence summary, and the fallback reason. Catalogue content — place names, areas, descriptions, and catalogue-authored caveats — is stored as authored and is not translated.
 
 The online path uses the PRD-specified `github.com/atharvamhaske/typesafe-sdk-go`, pinned to commit `1edab9b13089b2d45558e580e7b0ed546be4f02f`. It sends one bounded, batched `SystemOne` request. Budget, location, and exact deterministic constraints such as `24 jam` are normalized locally. Jev failures fall back to deterministic interpretation.
