@@ -346,19 +346,18 @@ func (s *Service) Create(ctx context.Context, rawURL string, force bool) (Run, e
 	return run, nil
 }
 
-// findByURL returns the most recent record for an already-canonical URL. A trailing slash is
-// folded so that "/cafe" and "/cafe/" — the same page — are treated as the same record; the
-// stored URL itself is never rewritten.
+// findByURL returns the most recent record for an already-canonical URL, compared by what
+// identifies the place rather than by the literal text.
 func (s *Service) findByURL(ctx context.Context, canonical string) (Run, bool, error) {
 	runs, err := s.store.List(ctx)
 	if err != nil {
 		return Run{}, false, err
 	}
-	target := strings.TrimSuffix(canonical, "/")
+	target := duplicateKey(canonical)
 	var newest Run
 	found := false
 	for _, candidate := range runs {
-		if strings.TrimSuffix(candidate.URL, "/") != target {
+		if duplicateKey(candidate.URL) != target {
 			continue
 		}
 		if !found || candidate.CreatedAt.After(newest.CreatedAt) {
@@ -366,6 +365,26 @@ func (s *Service) findByURL(ctx context.Context, canonical string) (Run, bool, e
 		}
 	}
 	return newest, found, nil
+}
+
+// duplicateKey reduces a URL to the part that identifies the place, for comparison only —
+// the stored URL is never rewritten.
+//
+// A trailing slash is folded because "/cafe" and "/cafe/" are the same page. A Google Maps
+// short link is reduced further: its identity is entirely the path token, and the share
+// sheet appends a tracking query, so the same café pasted from a phone as
+// "maps.app.goo.gl/x?g_st=ic" would otherwise look like a URL never ingested before.
+func duplicateKey(raw string) string {
+	trimmed := strings.TrimSuffix(strings.TrimSpace(raw), "/")
+	parsed, err := url.Parse(trimmed)
+	if err != nil {
+		return trimmed
+	}
+	parsed.Fragment = ""
+	if parsed.Host == "maps.app.goo.gl" || parsed.Host == "goo.gl" {
+		parsed.RawQuery = ""
+	}
+	return parsed.String()
 }
 
 func (s *Service) Update(ctx context.Context, id, action string) (Run, error) {

@@ -115,6 +115,28 @@ func TestCreateRefusesADuplicateURL(t *testing.T) {
 	}
 }
 
+func TestCreateRefusesAShortLinkWithATrackingQuery(t *testing.T) {
+	store, queue := NewMemoryStore(), &fakeQueue{}
+	service := NewService(store, queue)
+	if _, err := service.Create(t.Context(), "https://maps.app.goo.gl/Z2o2jDkNgLhq4SjN8", false); err != nil {
+		t.Fatal(err)
+	}
+	// The Maps share sheet appends ?g_st=ic. The same café pasted from a phone must not
+	// read as a URL that was never ingested — that is the ordinary way this arrives.
+	_, err := service.Create(t.Context(), "https://maps.app.goo.gl/Z2o2jDkNgLhq4SjN8?g_st=ic", false)
+	var duplicate ErrDuplicateURL
+	if !errors.As(err, &duplicate) {
+		t.Fatalf("a short link with a tracking query is the same place: err=%v", err)
+	}
+	// A query that is not tracking is part of the identity on an ordinary host.
+	if _, err := service.Create(t.Context(), "https://example.com/cafe?a=1", false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Create(t.Context(), "https://example.com/cafe?a=2", false); err != nil {
+		t.Fatalf("a different query on an ordinary host is a different URL: %v", err)
+	}
+}
+
 func TestCreateForcedQueuesASecondCrawl(t *testing.T) {
 	store, queue := NewMemoryStore(), &fakeQueue{}
 	service := NewService(store, queue)
