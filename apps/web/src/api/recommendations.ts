@@ -37,6 +37,21 @@ export type PlacePhoto = {
   attribution: { name: string; uri: string } | null;
 };
 
+/** Both photo endpoints answer with this same body, so the shape is validated in one place. */
+function readPlacePhotoBody(body: unknown): PlacePhoto | null {
+  if (typeof body !== "object" || body === null || !("photo_url" in body)) return null;
+  const photoURL = body.photo_url;
+  if (typeof photoURL !== "string" || photoURL.length === 0) return null;
+  const raw = "attribution" in body ? body.attribution : null;
+  const credit = raw && typeof raw === "object" ? raw : null;
+  return {
+    photoURL,
+    attribution: credit
+      ? { name: "name" in credit && typeof credit.name === "string" ? credit.name : "", uri: "uri" in credit && typeof credit.uri === "string" ? credit.uri : "" }
+      : null,
+  };
+}
+
 /**
  * Resolves to null — never throws, never logs — for every expected miss: a place
  * without a photo, an unknown id, an unconfigured Places key, an expired URL or a
@@ -46,15 +61,23 @@ export async function fetchPlacePhoto(googlePlaceID: string, signal: AbortSignal
   try {
     const response = await fetch(`${import.meta.env.VITE_API_BASE_URL ?? ""}/v1/places/${encodeURIComponent(googlePlaceID)}/photo`, { signal });
     if (!response.ok) return null;
-    const body = await response.json();
-    if (typeof body?.photo_url !== "string" || body.photo_url.length === 0) return null;
-    const attribution = body.attribution;
-    return {
-      photoURL: body.photo_url,
-      attribution: attribution && typeof attribution === "object"
-        ? { name: typeof attribution.name === "string" ? attribution.name : "", uri: typeof attribution.uri === "string" ? attribution.uri : "" }
-        : null,
-    };
+    return readPlacePhotoBody(await response.json());
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Asks the API to mint a fresh Google URL after the browser found the cached one dead — the
+ * counterpart to the long server-side cache. Same shape and the same silent rule as
+ * `fetchPlacePhoto`: a place with no photo (404), a rate-limited refresh (429), a dropped
+ * connection or an unparseable body all resolve to null, so the card keeps its art.
+ */
+export async function refreshPlacePhoto(googlePlaceID: string, signal: AbortSignal): Promise<PlacePhoto | null> {
+  try {
+    const response = await fetch(`${import.meta.env.VITE_API_BASE_URL ?? ""}/v1/places/${encodeURIComponent(googlePlaceID)}/photo/refresh`, { method: "POST", signal });
+    if (!response.ok) return null;
+    return readPlacePhotoBody(await response.json());
   } catch {
     return null;
   }

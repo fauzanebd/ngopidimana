@@ -1,14 +1,14 @@
 import { useEffect, useRef, useState } from "react";
-import { AlertTriangle, Archive, ArrowRight, ExternalLink, FileSearch, Link2, MoreHorizontal, Pencil, RefreshCw, RotateCcw, ShieldCheck, Trash2, X } from "lucide-react";
-import type { EvidenceField, Run, RunAction } from "../types";
+import { AlertTriangle, Archive, ArrowRight, ExternalLink, FileSearch, ImageOff, Link2, MoreHorizontal, Pencil, RefreshCw, RotateCcw, ShieldCheck, Trash2, X } from "lucide-react";
+import type { EvidenceField, PhotoOverride, Run, RunAction } from "../types";
 import { GooglePlacePanel } from "./GooglePlacePanel";
 import { ManualEvidenceForm } from "./ManualEvidenceForm";
 import { ConflictResolution } from "./ConflictResolution";
 import { relativeTime, sourceLabel } from "./RunQueue";
 
-type Props = { run: Run | null; deleting: boolean; savingEvidence: boolean; onAction: (action: RunAction) => void; onDelete: () => void; onAddEvidence: (input: { key: string; value: string }) => Promise<boolean>; onRemoveEvidence: (id: string) => void; onReplaceEvidence: (id: string, value: string) => Promise<boolean>; onEvidenceAction: (id: string, action: "exclude" | "restore" | "choose") => void };
+type Props = { run: Run | null; deleting: boolean; savingEvidence: boolean; onAction: (action: RunAction) => void; onDelete: () => void; onAddEvidence: (input: { key: string; value: string }) => Promise<boolean>; onRemoveEvidence: (id: string) => void; onReplaceEvidence: (id: string, value: string) => Promise<boolean>; onEvidenceAction: (id: string, action: "exclude" | "restore" | "choose") => void; onSavePhoto: (input: PhotoOverride) => Promise<boolean>; onClearPhoto: () => void };
 
-export function ReviewPanel({ run, deleting, savingEvidence, onAction, onDelete, onAddEvidence, onRemoveEvidence, onReplaceEvidence, onEvidenceAction }: Props) {
+export function ReviewPanel({ run, deleting, savingEvidence, onAction, onDelete, onAddEvidence, onRemoveEvidence, onReplaceEvidence, onEvidenceAction, onSavePhoto, onClearPhoto }: Props) {
   if (!run) return <div className="grid min-h-[520px] place-items-center p-8 text-center"><div><FileSearch className="mx-auto h-8 w-8 text-ink/30" /><p className="mt-4 font-display text-3xl">Select a record to review.</p><p className="mt-2 text-sm text-ink/45">Evidence and conflicts stay visible before anything is published.</p></div></div>;
   const canPublish = run.state === "needs_review" && run.issues.length === 0;
   const warnings = run.warnings || [];
@@ -24,6 +24,7 @@ export function ReviewPanel({ run, deleting, savingEvidence, onAction, onDelete,
         {warnings.length ? <div className="mb-5 rounded-xl border border-sky/70 bg-sky/25 p-4"><div className="text-xs font-bold uppercase tracking-[0.12em] text-slate-700">Non-blocking enrichment note</div>{warnings.map((warning) => <p key={warning} className="mt-2 text-sm leading-6 text-slate-600">{warning}</p>)}</div> : null}
         <ConflictResolution fields={run.fields} disabled={savingEvidence} onChoose={(id) => onEvidenceAction(id, "choose")} />
         <GooglePlacePanel key={run.id} run={run} />
+        {run.state === "enriching" || run.state === "archived" ? null : <CoverPhotoSection key={run.id} run={run} saving={savingEvidence} onSave={onSavePhoto} onClear={onClearPhoto} />}
         <ManualEvidenceForm disabled={savingEvidence || run.state === "enriching" || run.state === "archived"} onAdd={onAddEvidence} />
         <section><div className="mb-3 flex items-center justify-between"><h3 className="text-xs font-semibold uppercase tracking-[0.15em] text-ink/50">Evidence</h3><span className="text-xs text-ink/40">{run.fields.filter((field) => !field.excluded).length} active{run.fields.some((field) => field.excluded) ? ` · ${run.fields.filter((field) => field.excluded).length} excluded` : ""}</span></div><div className="overflow-hidden rounded-xl border border-ink/15 bg-[#fffdf8]">{run.fields.length ? [...run.fields].sort((a, b) => Number(Boolean(a.excluded)) - Number(Boolean(b.excluded))).map((field) => <EvidenceRow key={field.id || `${field.key}-${field.source}-${field.source_url || field.value}`} field={field} busy={savingEvidence} onRemove={onRemoveEvidence} onReplace={onReplaceEvidence} onAction={onEvidenceAction} />) : <div className="px-5 py-14 text-center text-sm text-ink/40">Evidence will appear as processing completes.</div>}</div></section>
       </div>
@@ -76,6 +77,47 @@ function OverflowMenu({ run, deleting, onRefresh, onDelete }: { run: Run; deleti
 function PipelineState({ stage, progress }: { stage: string; progress: number }) {
   const labels: Record<string, string> = { queued: "Waiting for worker", fetch_source: "Fetching source", extract_evidence: "Extracting deterministic evidence", resolve_google_place: "Resolving the stable Google Place ID", fetch_google_reviews: "Fetching official Google reviews", discover_sources: "Discovering corroborating sources with Exa", merge_evidence: "Attaching source context", structured_extraction: "Extracting cited facts with OpenRouter", normalize_evidence: "Normalizing evidence and detecting conflicts", ready_for_review: "Ready for review" };
   return <div className="mb-5 rounded-xl border border-sky/70 bg-sky/25 p-4"><div className="flex items-center justify-between text-xs font-semibold"><span className="flex items-center gap-2"><RefreshCw className="h-4 w-4 animate-spin" /> Enrichment in progress</span><span>{progress}%</span></div><div className="mt-3 h-1.5 overflow-hidden rounded-full bg-ink/10"><div className="h-full rounded-full bg-moss transition-all" style={{ width: `${progress}%` }} /></div><p className="mt-2 text-[11px] text-ink/50">{labels[stage] || stage.replaceAll("_", " ")}</p></div>;
+}
+
+function CoverPhotoSection({ run, saving, onSave, onClear }: { run: Run; saving: boolean; onSave: (input: PhotoOverride) => Promise<boolean>; onClear: () => void }) {
+  const savedURL = run.photo_override?.url?.trim() || "";
+  const savedAttribution = run.photo_override?.attribution || "";
+  const [url, setURL] = useState(savedURL);
+  const [attribution, setAttribution] = useState(savedAttribution);
+  const [broken, setBroken] = useState(false);
+  useEffect(() => { setURL(savedURL); setAttribution(savedAttribution); setBroken(false); }, [savedURL, savedAttribution]);
+
+  async function submit(event: React.FormEvent) {
+    event.preventDefault();
+    if (!url.trim()) return;
+    await onSave({ url: url.trim(), attribution: attribution.trim() });
+  }
+
+  return <form onSubmit={submit} className="mb-5 rounded-xl border border-ink/15 bg-white/65 p-4">
+    <p className="text-xs font-bold uppercase tracking-[0.12em] text-ink/55">Cover photo</p>
+    <p className="mt-1 text-[11px] leading-5 text-ink/50">This image is served instead of Google’s photo, so it costs nothing and never expires. Use one the project has the rights to use — supplied by the venue or licensed.</p>
+    <div className="mt-3 grid gap-3 sm:grid-cols-[180px_minmax(0,1fr)]">
+      <div>
+        <p className="text-[11px] font-semibold text-ink/60">Current photo</p>
+        {savedURL ? (broken
+          ? <div className="mt-1.5 grid h-28 w-full place-items-center rounded-lg border border-dashed border-ink/20 bg-[#f8f8f6] px-3 text-center"><span><ImageOff className="mx-auto h-5 w-5 text-ink/30" /><span className="mt-1 block text-[10px] leading-4 text-ink/45">This image could not be loaded. Check the URL.</span></span></div>
+          : <img src={savedURL} alt="Cover photo override preview" onError={() => setBroken(true)} className="mt-1.5 h-28 w-full rounded-lg border border-ink/15 bg-cream object-cover" />)
+          : <div className="mt-1.5 grid h-28 w-full place-items-center rounded-lg border border-dashed border-ink/20 bg-[#f8f8f6] px-3 text-center text-[10px] leading-4 text-ink/45">No override — this record falls back to the Google photo.</div>}
+        {savedURL && savedAttribution ? <p className="mt-1.5 truncate text-[10px] text-ink/45">{savedAttribution}</p> : null}
+      </div>
+      <div className="grid content-start gap-3">
+        <label className="text-[11px] font-semibold text-ink/60">Image URL<input value={url} onChange={(event) => setURL(event.target.value)} maxLength={800} placeholder="https://…" spellCheck={false} className="focus-ring mt-1.5 h-10 w-full rounded-lg border border-ink/15 bg-[#fffdf8] px-3 text-xs text-ink placeholder:text-ink/30" /></label>
+        <label className="text-[11px] font-semibold text-ink/60">Credit<textarea value={attribution} onChange={(event) => setAttribution(event.target.value)} maxLength={200} rows={2} placeholder="e.g. Venue photo" className="focus-ring mt-1.5 w-full resize-y rounded-lg border border-ink/15 bg-[#fffdf8] px-3 py-2.5 text-xs leading-5 text-ink placeholder:text-ink/30" /></label>
+      </div>
+    </div>
+    <div className="mt-3 flex items-center justify-between gap-3">
+      <span className="text-[10px] text-ink/35">{attribution.length}/200</span>
+      <div className="flex items-center gap-2">
+        {savedURL ? <button type="button" disabled={saving} onClick={onClear} className="focus-ring inline-flex h-9 items-center gap-2 rounded-lg border border-ink/15 px-3 text-xs font-medium hover:bg-cream disabled:opacity-40"><Trash2 className="h-3.5 w-3.5" /> Clear</button> : null}
+        <button type="submit" disabled={saving || !url.trim()} className="focus-ring rounded-lg bg-moss px-4 py-2 text-xs font-semibold text-white disabled:opacity-40">{saving ? "Saving…" : "Save photo"}</button>
+      </div>
+    </div>
+  </form>;
 }
 
 function EvidenceRow({ field, busy, onRemove, onReplace, onAction }: { field: EvidenceField; busy: boolean; onRemove: (id: string) => void; onReplace: (id: string, value: string) => Promise<boolean>; onAction: (id: string, action: "exclude" | "restore" | "choose") => void }) {

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError } from "../api/client";
 import * as ingestionAPI from "../api/ingestion";
-import type { ManualEvidenceInput, Run, RunAction } from "../types";
+import type { ManualEvidenceInput, PhotoOverride, Run, RunAction } from "../types";
 
 export function useIngestionRuns(onUnauthorized?: () => void) {
   const [runs, setRuns] = useState<Run[]>([]);
@@ -207,5 +207,13 @@ export function useIngestionRuns(onUnauthorized?: () => void) {
     return mutateEvidence(run, ingestionAPI.chooseEvidence(run.id, evidenceID), "Conflict resolved using the selected value.");
   }
 
-  return { runs, loading, reconnecting, submitting, deletingID, savingEvidence, bulkBusy, notice, error, load, create, update, remove, publishMany, removeMany, addEvidence, removeEvidence, replaceEvidence, excludeEvidence, restoreEvidence, chooseEvidence };
+  function savePhotoOverride(run: Run, input: PhotoOverride) {
+    return mutateEvidence(run, ingestionAPI.setPhotoOverride(run.id, input), "Cover photo saved. It is served instead of the Google photo.");
+  }
+
+  function clearPhotoOverride(run: Run) {
+    return mutateEvidence(run, ingestionAPI.clearPhotoOverride(run.id), "Cover photo cleared. The Google photo is used again.");
+  }
+
+  return { runs, loading, reconnecting, submitting, deletingID, savingEvidence, bulkBusy, notice, error, load, create, update, remove, publishMany, removeMany, addEvidence, removeEvidence, replaceEvidence, excludeEvidence, restoreEvidence, chooseEvidence, savePhotoOverride, clearPhotoOverride };
 }

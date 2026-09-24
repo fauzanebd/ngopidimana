@@ -47,8 +47,25 @@ type Run struct {
 	Fields        []EvidenceField        `json:"fields"`
 	GooglePlaceID string                 `json:"google_place_id,omitempty"`
 	Photo         *googleplaces.PhotoRef `json:"photo,omitempty"`
-	CreatedAt     time.Time              `json:"created_at"`
-	UpdatedAt     time.Time              `json:"updated_at"`
+	// PhotoOverride is an image the project owns or has rights to. It is served
+	// instead of Google's, so it bills nothing and never expires. Nil means "not
+	// specified — leave whatever the published place already has"; a non-nil empty
+	// value is an explicit "none".
+	PhotoOverride *PhotoOverride `json:"photo_override,omitempty"`
+	CreatedAt     time.Time      `json:"created_at"`
+	UpdatedAt     time.Time      `json:"updated_at"`
+}
+
+// PhotoOverride is an admin-attached cover image plus the credit to show with it.
+type PhotoOverride struct {
+	URL         string `json:"url"`
+	Attribution string `json:"attribution"`
+}
+
+// PhotoOverrideInput is the payload the admin API accepts for a cover photo.
+type PhotoOverrideInput struct {
+	URL         string `json:"url"`
+	Attribution string `json:"attribution"`
 }
 
 type DiscoverySeed struct {

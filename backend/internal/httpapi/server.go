@@ -19,13 +19,6 @@ type GooglePlacesClient interface {
 	PhotoMedia(context.Context, string, int) (string, error)
 }
 
-// PlacePhotoStore reads and writes the photo reference captured at ingestion, which
-// is what lets the render path skip the pricey Place Details lookup.
-type PlacePhotoStore interface {
-	PhotoRef(ctx context.Context, googlePlaceID string) (googleplaces.PhotoRef, bool, error)
-	SavePhotoRef(ctx context.Context, googlePlaceID string, reference googleplaces.PhotoRef) error
-}
-
 type Server struct {
 	recommendations *recommendation.Service
 	ingestion       *ingestion.Service
@@ -60,6 +53,7 @@ func NewServer(options Options) http.Handler {
 	mux.HandleFunc("GET /healthz", server.healthz)
 	mux.HandleFunc("POST /v1/recommendations", server.recommend)
 	mux.HandleFunc("GET /v1/places/{googlePlaceID}/photo", server.placePhotoHandler)
+	mux.HandleFunc("POST /v1/places/{googlePlaceID}/photo/refresh", server.refreshPlacePhoto)
 	mux.HandleFunc("POST /v1/auth/request-link", server.requestLink)
 	mux.HandleFunc("POST /v1/auth/verify", server.verifyLogin)
 	mux.HandleFunc("GET /v1/auth/session", server.session)
@@ -77,6 +71,8 @@ func NewServer(options Options) http.Handler {
 	admin.HandleFunc("DELETE /v1/admin/ingestion-runs/{id}/evidence/{evidenceID}", server.excludeEvidence)
 	admin.HandleFunc("POST /v1/admin/ingestion-runs/{id}/evidence/{evidenceID}/restore", server.restoreEvidence)
 	admin.HandleFunc("POST /v1/admin/ingestion-runs/{id}/evidence/{evidenceID}/choose", server.chooseEvidence)
+	admin.HandleFunc("PUT /v1/admin/ingestion-runs/{id}/photo", server.setPhotoOverride)
+	admin.HandleFunc("DELETE /v1/admin/ingestion-runs/{id}/photo", server.clearPhotoOverride)
 	mux.Handle("/v1/admin/", server.requireContributor(admin))
 
 	return withLogging(withCORS(options.CORSOrigins, mux))

@@ -4,12 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/fauzanebd/wheretowfc/backend/internal/googleplaces"
+	"github.com/fauzanebd/wheretowfc/backend/internal/ingestion"
 )
 
 // photoGooglePlaces is a Google Places stand-in that counts calls, so the tests
@@ -185,9 +188,15 @@ func TestPlacePhotoRejectedIDIsNotFoundNotAGatewayError(t *testing.T) {
 
 // fakePhotoStore stands in for the catalogue's stored references.
 type fakePhotoStore struct {
-	stored   map[string]googleplaces.PhotoRef
-	saves    int
-	lastSave googleplaces.PhotoRef
+	stored    map[string]googleplaces.PhotoRef
+	overrides map[string]ingestion.PhotoOverride
+	saves     int
+	lastSave  googleplaces.PhotoRef
+}
+
+func (store *fakePhotoStore) PhotoOverride(_ context.Context, googlePlaceID string) (ingestion.PhotoOverride, bool, error) {
+	override, found := store.overrides[googlePlaceID]
+	return override, found, nil
 }
 
 func (store *fakePhotoStore) PhotoRef(_ context.Context, googlePlaceID string) (googleplaces.PhotoRef, bool, error) {
@@ -265,5 +274,87 @@ func TestPlacePhotoRefreshesAnExpiredStoredReference(t *testing.T) {
 	// The refreshed name is kept, so the next render is cheap again.
 	if store.saves != 1 || store.lastSave.Name != "places/ChIJtest/photos/fresh" || store.lastSave.AttributionName != "New Author" {
 		t.Fatalf("stored = %#v after %d saves", store.lastSave, store.saves)
+	}
+}
+
+func TestOwnedPhotoOverridesGoogleAndCostsNothing(t *testing.T) {
+	fake := &photoGooglePlaces{place: googleplaces.Place{ID: "ChIJtest"}, mediaURL: "https://lh3.googleusercontent.com/google"}
+	store := &fakePhotoStore{overrides: map[string]ingestion.PhotoOverride{
+		"ChIJtest": {URL: "https://cdn.pengenkekopi.shop/tis-my-cafe.jpg", Attribution: "Venue photo"},
+	}}
+	server := photoServer(fake)
+	server.photoStore = store
+
+	response := getPhoto(t, server, "/v1/places/ChIJtest/photo")
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", response.Code, response.Body.String())
+	}
+	var photo placePhoto
+	if err := json.Unmarshal(response.Body.Bytes(), &photo); err != nil {
+		t.Fatal(err)
+	}
+	if photo.URL != "https://cdn.pengenkekopi.shop/tis-my-cafe.jpg" || photo.Attribution.Name != "Venue photo" {
+		t.Fatalf("photo = %#v, want the owned image", photo)
+	}
+	if fake.placeCalls != 0 || fake.mediaCalls != 0 {
+		t.Fatalf("an owned photo cost Google calls: place=%d media=%d", fake.placeCalls, fake.mediaCalls)
+	}
+}
+
+func TestOwnedPhotoWorksWithoutGoogleConfigured(t *testing.T) {
+	// An owned photo needs no API key, which is exactly what you want when the key
+	// is absent (local dev) or the quota is exhausted.
+	store := &fakePhotoStore{overrides: map[string]ingestion.PhotoOverride{
+		"ChIJtest": {URL: "https://cdn.pengenkekopi.shop/x.jpg"},
+	}}
+	server := &Server{}
+	server.photoStore = store
+	if response := getPhoto(t, server, "/v1/places/ChIJtest/photo"); response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want the owned photo even with no Google client", response.Code)
+	}
+}
+
+func postRefresh(t *testing.T, server *Server, placeID string) *httptest.ResponseRecorder {
+	t.Helper()
+	request := httptest.NewRequest(http.MethodPost, "/v1/places/"+placeID+"/photo/refresh", nil)
+	request.SetPathValue("googlePlaceID", placeID)
+	response := httptest.NewRecorder()
+	server.refreshPlacePhoto(response, request)
+	return response
+}
+
+func TestRefreshReResolvesOnceThenBacksOff(t *testing.T) {
+	fake := &photoGooglePlaces{
+		place:    googleplaces.Place{ID: "ChIJtest", Photos: []googleplaces.PlacePhoto{{Name: "places/ChIJtest/photos/a"}}},
+		mediaURL: "https://lh3.googleusercontent.com/fresh",
+	}
+	server := photoServer(fake)
+
+	if response := postRefresh(t, server, "ChIJtest"); response.Code != http.StatusOK {
+		t.Fatalf("first refresh = %d: %s", response.Code, response.Body.String())
+	}
+	// A client stuck in a retry loop must not be able to spend the budget: the URL
+	// was just resolved, so a second report is refused.
+	if response := postRefresh(t, server, "ChIJtest"); response.Code != http.StatusTooManyRequests {
+		t.Fatalf("second refresh = %d, want 429", response.Code)
+	}
+	if fake.mediaCalls != 1 {
+		t.Fatalf("media calls = %d, want exactly one", fake.mediaCalls)
+	}
+}
+
+func TestRefreshDailyBudgetBoundsTheEndpoint(t *testing.T) {
+	fake := &photoGooglePlaces{
+		place:    googleplaces.Place{ID: "ChIJtest", Photos: []googleplaces.PlacePhoto{{Name: "places/ChIJtest/photos/a"}}},
+		mediaURL: "https://lh3.googleusercontent.com/fresh",
+	}
+	server := photoServer(fake)
+	now := time.Now()
+	// Spend the day's budget on distinct places, then confirm the next is refused.
+	for index := range photoRefreshesPerDay {
+		server.photos.beginRefresh(fmt.Sprintf("ChIJ%d", index), now)
+	}
+	if server.photos.beginRefresh("ChIJnew", now) {
+		t.Fatal("the daily refresh budget did not bound the endpoint")
 	}
 }

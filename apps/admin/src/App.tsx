@@ -10,7 +10,7 @@ import { FILTERS } from "./constants";
 import { useApiHealth } from "./hooks/useApiHealth";
 import { useIngestionRuns } from "./hooks/useIngestionRuns";
 import { useSession } from "./hooks/useSession";
-import type { Contributor, FilterKey, ManualEvidenceInput, RunAction } from "./types";
+import type { Contributor, FilterKey, ManualEvidenceInput, PhotoOverride, RunAction } from "./types";
 
 function App({ callbackToken = null }: { callbackToken?: string | null }) {
   const session = useSession(callbackToken);
@@ -25,7 +25,7 @@ function App({ callbackToken = null }: { callbackToken?: string | null }) {
 }
 
 function Dashboard({ contributor, onSignOut }: { contributor: Contributor; onSignOut: () => Promise<void> }) {
-  const { runs, loading, reconnecting, submitting, deletingID, savingEvidence, bulkBusy, notice, error, load, create, update, remove, publishMany, removeMany, addEvidence, removeEvidence, replaceEvidence, excludeEvidence, restoreEvidence, chooseEvidence } = useIngestionRuns(() => void onSignOut());
+  const { runs, loading, reconnecting, submitting, deletingID, savingEvidence, bulkBusy, notice, error, load, create, update, remove, publishMany, removeMany, addEvidence, removeEvidence, replaceEvidence, excludeEvidence, restoreEvidence, chooseEvidence, savePhotoOverride, clearPhotoOverride } = useIngestionRuns(() => void onSignOut());
   const apiHealthy = useApiHealth();
   const [activeFilter, setActiveFilter] = useState<FilterKey>("needs_review");
   const [selectedID, setSelectedID] = useState<string | null>(null);
@@ -133,6 +133,16 @@ function Dashboard({ contributor, onSignOut }: { contributor: Contributor; onSig
     if (action === "choose") void chooseEvidence(selected, evidenceID);
   }
 
+  async function savePhoto(input: PhotoOverride) {
+    if (!selected) return false;
+    return Boolean(await savePhotoOverride(selected, input));
+  }
+
+  async function clearPhoto() {
+    if (!selected) return;
+    await clearPhotoOverride(selected);
+  }
+
   return <main className="min-h-screen bg-paper text-ink">
     <AdminHeader connected={apiHealthy} contributor={contributor} onSignOut={onSignOut} />
     <div className="grid min-h-[calc(100vh-64px)] lg:grid-cols-[228px_minmax(0,1fr)]">
@@ -142,7 +152,7 @@ function Dashboard({ contributor, onSignOut }: { contributor: Contributor; onSig
         <div className="flex items-center gap-2 overflow-x-auto border-b border-ink/15 px-5 py-3 lg:hidden">{FILTERS.map(({ key, label }) => <button key={key} onClick={() => changeFilter(key)} className={`whitespace-nowrap rounded-md px-3 py-2 text-xs font-medium ${activeFilter === key ? "bg-moss text-white" : "border border-ink/15 bg-white/60"}`}>{label}</button>)}</div>
         <div className="grid min-h-[650px] xl:grid-cols-[390px_minmax(0,1fr)]">
           <RunQueue runs={visibleRuns} loading={loading} activeFilter={activeFilter} selectedID={selected?.id || null} selectionMode={selectionMode} selectedIDs={selectedIDs} bulkBusy={bulkBusy} onSelect={setSelectedID} onToggleSelection={toggleRecordSelection} onToggleSelectionMode={toggleSelectionMode} onToggleAll={toggleAllVisible} onBulkPublish={() => void publishSelection()} onBulkDelete={() => void deleteSelection()} onRefresh={() => void load()} />
-          <div className="min-w-0 bg-[#f7f5ee]"><ReviewPanel run={selected} deleting={deletingID === selected?.id} savingEvidence={savingEvidence} onAction={(action) => void act(action)} onDelete={() => void deleteSelected()} onAddEvidence={addManualEvidence} onRemoveEvidence={(id) => void deleteManualEvidence(id)} onReplaceEvidence={editEvidence} onEvidenceAction={changeEvidence} /></div>
+          <div className="min-w-0 bg-[#f7f5ee]"><ReviewPanel run={selected} deleting={deletingID === selected?.id} savingEvidence={savingEvidence} onAction={(action) => void act(action)} onDelete={() => void deleteSelected()} onAddEvidence={addManualEvidence} onRemoveEvidence={(id) => void deleteManualEvidence(id)} onReplaceEvidence={editEvidence} onEvidenceAction={changeEvidence} onSavePhoto={savePhoto} onClearPhoto={() => void clearPhoto()} /></div>
         </div>
       </section>
     </div>

@@ -16,6 +16,7 @@ var ErrConflicts = errors.New("resolve conflicting evidence before publishing")
 var ErrInvalidAction = errors.New("action must be review, publish, refresh, or archive")
 var ErrInvalidManualEvidence = errors.New("invalid manual evidence")
 var ErrInvalidEvidence = errors.New("invalid evidence update")
+var ErrInvalidPhotoOverride = errors.New("a cover photo needs an absolute http(s) URL, at most 800 characters")
 
 type Publisher interface {
 	Publish(context.Context, Run) error
@@ -93,6 +94,32 @@ func (s *Service) AddManualEvidence(ctx context.Context, id string, input Manual
 		ID: newManualEvidenceID(), Key: key, Value: value, Source: "Manually added", CapturedAt: now.Format(time.RFC3339),
 		Method: "manual", Extractor: "admin", Confidence: .9,
 	})
+	return s.saveReviewedEvidence(ctx, run)
+}
+
+// SetPhotoOverride attaches an image the project has rights to, which the public
+// API serves instead of Google's. An empty URL clears it, and that is recorded as
+// an explicit "none" rather than "unspecified".
+func (s *Service) SetPhotoOverride(ctx context.Context, id string, input PhotoOverrideInput) (Run, error) {
+	run, err := s.Get(ctx, id)
+	if err != nil {
+		return Run{}, err
+	}
+	if run.State == "enriching" || run.State == "archived" {
+		return Run{}, fmt.Errorf("the cover photo cannot be changed while a record is %s", run.State)
+	}
+	imageURL := strings.TrimSpace(input.URL)
+	attribution := strings.Join(strings.Fields(input.Attribution), " ")
+	if imageURL == "" {
+		run.PhotoOverride = &PhotoOverride{}
+	} else {
+		parsed, parseErr := url.Parse(imageURL)
+		if parseErr != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") ||
+			len([]rune(imageURL)) > 800 || len([]rune(attribution)) > 200 {
+			return Run{}, ErrInvalidPhotoOverride
+		}
+		run.PhotoOverride = &PhotoOverride{URL: imageURL, Attribution: attribution}
+	}
 	return s.saveReviewedEvidence(ctx, run)
 }
 

@@ -28,6 +28,10 @@ export type EvidenceField = {
 
 export type RunState = "draft" | "enriching" | "needs_review" | "published" | "stale" | "archived" | "failed";
 
+// An image the project owns or has licensed, served in place of the Google photo. Absent
+// means "leave whatever the published place already has"; an empty url means "explicitly none".
+export type PhotoOverride = { url: string; attribution: string };
+
 export type Run = {
   id: string;
   url: string;
@@ -42,6 +46,7 @@ export type Run = {
   warnings?: string[];
   fields: EvidenceField[];
   google_place_id?: string;
+  photo_override?: PhotoOverride;
   created_at: string;
   updated_at: string;
 };

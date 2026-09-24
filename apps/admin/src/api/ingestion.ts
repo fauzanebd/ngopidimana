@@ -1,5 +1,5 @@
 import { request, type ApiRequestInit } from "./client";
-import type { GooglePlace, ManualEvidenceInput, Run, RunAction } from "../types";
+import type { GooglePlace, ManualEvidenceInput, PhotoOverride, Run, RunAction } from "../types";
 
 const INGESTION_ERROR = "The ingestion API request failed";
 
@@ -70,4 +70,16 @@ export async function restoreEvidence(id: string, evidenceID: string): Promise<R
 
 export async function chooseEvidence(id: string, evidenceID: string): Promise<Run> {
   return ingest<Run>(`/v1/admin/ingestion-runs/${id}/evidence/${encodeURIComponent(evidenceID)}/choose`, { method: "POST" });
+}
+
+export async function setPhotoOverride(id: string, input: PhotoOverride): Promise<Run> {
+  return ingest<Run>(`/v1/admin/ingestion-runs/${id}/photo`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+}
+
+export async function clearPhotoOverride(id: string): Promise<Run> {
+  return ingest<Run>(`/v1/admin/ingestion-runs/${id}/photo`, { method: "DELETE" });
 }

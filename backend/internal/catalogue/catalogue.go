@@ -44,8 +44,9 @@ func (store *Store) Publish(ctx context.Context, run ingestion.Run) error {
 
 	var placeID string
 	err = tx.QueryRowContext(ctx, `
-		INSERT INTO places (name, slug, status, google_place_id, photo_name, photo_attribution_name, photo_attribution_uri, photo_refreshed_at, updated_at)
-		VALUES ($1, $2, 'published', NULLIF($3, ''), $4, $5, $6, CASE WHEN $4 = '' THEN NULL ELSE now() END, now())
+		INSERT INTO places (name, slug, status, google_place_id, photo_name, photo_attribution_name, photo_attribution_uri, photo_refreshed_at,
+			photo_override_url, photo_override_attribution, updated_at)
+		VALUES ($1, $2, 'published', NULLIF($3, ''), $4, $5, $6, CASE WHEN $4 = '' THEN NULL ELSE now() END, $7, $8, now())
 		ON CONFLICT (google_place_id) WHERE google_place_id IS NOT NULL
 		DO UPDATE SET name = EXCLUDED.name, status = 'published', updated_at = now(),
 			-- A republish that captured no photo must not discard a reference that
@@ -53,9 +54,14 @@ func (store *Store) Publish(ctx context.Context, run ingestion.Run) error {
 			photo_name = COALESCE(NULLIF(EXCLUDED.photo_name, ''), places.photo_name),
 			photo_attribution_name = CASE WHEN EXCLUDED.photo_name = '' THEN places.photo_attribution_name ELSE EXCLUDED.photo_attribution_name END,
 			photo_attribution_uri = CASE WHEN EXCLUDED.photo_name = '' THEN places.photo_attribution_uri ELSE EXCLUDED.photo_attribution_uri END,
-			photo_refreshed_at = COALESCE(EXCLUDED.photo_refreshed_at, places.photo_refreshed_at)
+			photo_refreshed_at = COALESCE(EXCLUDED.photo_refreshed_at, places.photo_refreshed_at),
+			-- The admin's own cover photo only changes when a run actually carries an
+			-- override, so re-ingesting a place cannot silently drop it.
+			photo_override_url = CASE WHEN $9 THEN EXCLUDED.photo_override_url ELSE places.photo_override_url END,
+			photo_override_attribution = CASE WHEN $9 THEN EXCLUDED.photo_override_attribution ELSE places.photo_override_attribution END
 		RETURNING id::text`, data.name, publicationSlug(data.name, run.GooglePlaceID), run.GooglePlaceID,
-		data.photo.Name, data.photo.AttributionName, data.photo.AttributionURI).Scan(&placeID)
+		data.photo.Name, data.photo.AttributionName, data.photo.AttributionURI,
+		data.photoOverride.URL, data.photoOverride.Attribution, run.PhotoOverride != nil).Scan(&placeID)
 	if err != nil {
 		return fmt.Errorf("upsert place: %w", err)
 	}
@@ -149,6 +155,7 @@ type publication struct {
 	name, area, address string
 	lat, lng            float64
 	photo               googleplaces.PhotoRef
+	photoOverride       ingestion.PhotoOverride
 	facts               []fact
 	scores              map[string]score
 	links               map[string]string
@@ -159,6 +166,9 @@ func publicationData(run ingestion.Run) (publication, error) {
 	data := publication{name: strings.TrimSpace(run.Name), area: strings.TrimSpace(run.Area), scores: map[string]score{}, links: map[string]string{}}
 	if run.Photo != nil {
 		data.photo = *run.Photo
+	}
+	if run.PhotoOverride != nil {
+		data.photoOverride = *run.PhotoOverride
 	}
 	best := map[string]ingestion.EvidenceField{}
 	for _, field := range run.Fields {
@@ -643,4 +653,25 @@ func (store *Store) SavePhotoRef(ctx context.Context, googlePlaceID string, refe
 		return fmt.Errorf("save photo reference: %w", err)
 	}
 	return nil
+}
+
+// PhotoOverride returns the admin-attached cover photo for a place, if one is set.
+// It takes precedence over Google's photo: nothing is billed and nothing expires.
+func (store *Store) PhotoOverride(ctx context.Context, googlePlaceID string) (ingestion.PhotoOverride, bool, error) {
+	googlePlaceID = strings.TrimSpace(googlePlaceID)
+	if googlePlaceID == "" {
+		return ingestion.PhotoOverride{}, false, nil
+	}
+	var override ingestion.PhotoOverride
+	err := store.db.QueryRowContext(ctx, `
+		SELECT photo_override_url, photo_override_attribution
+		FROM places WHERE google_place_id = $1 AND photo_override_url <> ''`, googlePlaceID).
+		Scan(&override.URL, &override.Attribution)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ingestion.PhotoOverride{}, false, nil
+	}
+	if err != nil {
+		return ingestion.PhotoOverride{}, false, fmt.Errorf("read photo override: %w", err)
+	}
+	return override, true, nil
 }
