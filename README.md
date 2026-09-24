@@ -186,6 +186,19 @@ DELETE /v1/admin/ingestion-runs/{id}/photo
 
 The URL must be an absolute `http(s)` one (at most 800 characters) and the attribution at most 200. Clearing records an explicit *none*, which publishing applies — deleting it from the record would leave the published place exactly as it is. Republishing only applies an override when the run actually carries one, so re-ingesting a place cannot silently drop the image an admin attached.
 
+**Views are addressable.** The admin app routes on the filter and the open record, so any view can be linked, bookmarked or pasted into another tab:
+
+```text
+/                            -> redirects to /needs-review
+/needs-review                -> the queue, with its first record opened
+/published/<runId>           -> that record, even if the current filter would hide it
+/nonsense                    -> redirects to /needs-review
+```
+
+Filter and selection come from the URL rather than component state, which is what makes them shareable and is also why a background refresh can no longer swap the record under a click. The `FILTERS` keys in `apps/admin/src/constants.ts` remain the source of truth for which stages exist; `filterSlug`/`filterFromSlug` translate them to the hyphenated form used in URLs.
+
+Anything destructive goes through one in-app `ConfirmDialog`, never `window.confirm`: a browser that suppresses dialogs returns `false` without showing anything, which made a delete button look broken.
+
 Sign-in mail goes out over SMTP (`SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM`, `SMTP_TLS` = `starttls` | `implicit` | `none`). `starttls` on port 587 and `implicit` on 465 are the real-world settings; `none` sends in the clear and exists for a local relay such as Mailpit. With `SMTP_HOST` empty the API logs a startup warning and writes sign-in links to its own log instead of emailing them, which is how local development signs in without any provider. `ADMIN_APP_URL` is the admin origin the link points back to; `ADMIN_COOKIE_SAMESITE` (`lax` | `none`) and `ADMIN_COOKIE_DOMAIN` control the session cookie when the API and the admin app are on different origins.
 
 To exercise real mail locally without a provider account, point the API at a throwaway catcher:
