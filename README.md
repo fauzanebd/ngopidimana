@@ -104,7 +104,7 @@ docker compose config --quiet
 }
 ```
 
-Every result carries `google_place_id` when the published place has one, which is what the card uses to ask for a photo.
+Each result carries `google_place_id` when the published place has one, which is what the card uses to ask for a photo.
 
 `GET /v1/places/{google_place_id}/photo`
 
@@ -122,7 +122,9 @@ Answers `404` when the place has no photo or Google rejects the id, and `503` wh
 1. **The image bytes never pass through this service.** `photo_url` points at Google, and the browser loads it directly. Google's Places policies forbid pre-fetching, caching, or storing place content (photos included); only `place_id` may be kept indefinitely. Downloading photos into our storage or a CDN would breach that, so the API resolves a URL and nothing more. The in-process cache holds a resolved *URL* for 10 minutes purely to avoid a second round trip — never image data.
 2. **The attribution is not decoration.** Google requires the photo's author to be credited wherever the photo appears, and the URL is short-lived, so the card must keep handling a photo that stops loading (it reverts to its gradient art).
 
-Each uncached request costs one Place Details call plus one Place Photos call, which is why the URL is cached and why the frontend asks per card rather than for the whole result set.
+**Cost.** The expensive half of a photo is not the image: Place Photos bills at $7/1,000 while the Place Details lookup that yields a photo *name* bills at $20/1,000. So ingestion captures the photo reference while it is already making that Place Details call for reviews (free there), and the render path spends the stored reference on a single media call. A name Google has since expired costs one refresh lookup, after which the refreshed reference is stored again — the steady state is one $7/1,000 call per photo, not two calls. Both SKUs carry monthly free allowances, so a small catalogue sits inside them.
+
+The frontend asks per card rather than for the whole result set, and the resolved URL is cached in-process for 10 minutes, which is what keeps a burst of searches from repeating work.
 
 `locale` is optional and defaults to `en`. It accepts `en` or `id` (case-insensitive, region suffix ignored) and selects the language of the strings the service generates: requirement labels, the interpretation summary, `matched_on`, generated caveats, the evidence summary, and the fallback reason. Catalogue content — place names, areas, descriptions, and catalogue-authored caveats — is stored as authored and is not translated.
 
