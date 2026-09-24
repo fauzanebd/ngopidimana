@@ -1,5 +1,6 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
+import { BrowserRouter } from "react-router-dom";
 import App from "./App";
 import "../../../packages/theme/theme.css";
 import "./styles.css";
@@ -14,4 +15,6 @@ function callbackToken() {
   return token || null;
 }
 
-ReactDOM.createRoot(document.getElementById("root")!).render(<React.StrictMode><App callbackToken={callbackToken()} /></React.StrictMode>);
+// The router mounts after the callback path has been normalised, so it reads / as the entry
+// route and never has to know about the magic link.
+ReactDOM.createRoot(document.getElementById("root")!).render(<React.StrictMode><BrowserRouter><App callbackToken={callbackToken()} /></BrowserRouter></React.StrictMode>);

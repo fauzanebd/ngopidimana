@@ -1,16 +1,22 @@
 import { Coffee, LoaderCircle } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { Link, Navigate, Route, Routes, useNavigate, useParams } from "react-router-dom";
 import { AdminHeader } from "./components/AdminHeader";
 import { AdminSidebar } from "./components/AdminSidebar";
+import { ConfirmDialog } from "./components/ConfirmDialog";
 import { IngestionToolbar } from "./components/IngestionToolbar";
 import { ReviewPanel } from "./components/ReviewPanel";
 import { RunQueue } from "./components/RunQueue";
 import { SignInPanel } from "./components/SignInPanel";
-import { FILTERS } from "./constants";
+import { FILTERS, filterFromSlug, filterSlug } from "./constants";
 import { useApiHealth } from "./hooks/useApiHealth";
 import { useIngestionRuns } from "./hooks/useIngestionRuns";
 import { useSession } from "./hooks/useSession";
-import type { Contributor, FilterKey, ManualEvidenceInput, PhotoOverride, RunAction } from "./types";
+import type { Contributor, FilterKey, ManualEvidenceInput, PhotoOverride, Run, RunAction } from "./types";
+
+// A delete waiting on confirmation. The records are captured when the dialog opens and the
+// handler deletes exactly those — it never re-derives "the selected record" afterwards.
+type PendingDelete = { kind: "single"; run: Run } | { kind: "bulk"; runs: Run[] };
 
 function App({ callbackToken = null }: { callbackToken?: string | null }) {
   const session = useSession(callbackToken);
@@ -21,19 +27,37 @@ function App({ callbackToken = null }: { callbackToken?: string | null }) {
 
   if (session.status === "signed-out" || !session.contributor) return <SignInPanel signingIn={session.signingIn} error={session.signInError} sentTo={session.sentTo} onSignIn={session.signIn} onUseAnotherAddress={session.clearSentTo} />;
 
-  return <Dashboard contributor={session.contributor} onSignOut={session.signOut} />;
+  return <Routes>
+    <Route path="/" element={<Navigate to="/needs-review" replace />} />
+    <Route path="/:filter" element={<FilterRoute contributor={session.contributor} onSignOut={session.signOut} />} />
+    <Route path="/:filter/:runId" element={<FilterRoute contributor={session.contributor} onSignOut={session.signOut} />} />
+    <Route path="*" element={<Navigate to="/needs-review" replace />} />
+  </Routes>;
 }
 
-function Dashboard({ contributor, onSignOut }: { contributor: Contributor; onSignOut: () => Promise<void> }) {
+// A filter that is not one of the queue's stages is a URL nobody should have opened, so it
+// lands on the default queue instead of rendering an empty shell.
+function FilterRoute({ contributor, onSignOut }: { contributor: Contributor; onSignOut: () => Promise<void> }) {
+  const { filter, runId } = useParams();
+  const stage = filterFromSlug(filter);
+  if (!stage) return <Navigate to="/needs-review" replace />;
+  return <Dashboard filter={stage} runId={runId || null} contributor={contributor} onSignOut={onSignOut} />;
+}
+
+function Dashboard({ filter, runId, contributor, onSignOut }: { filter: FilterKey; runId: string | null; contributor: Contributor; onSignOut: () => Promise<void> }) {
+  const navigate = useNavigate();
   const { runs, loading, reconnecting, submitting, deletingID, savingEvidence, bulkBusy, notice, error, load, create, update, remove, publishMany, removeMany, addEvidence, removeEvidence, replaceEvidence, excludeEvidence, restoreEvidence, chooseEvidence, savePhotoOverride, clearPhotoOverride } = useIngestionRuns(() => void onSignOut());
   const apiHealthy = useApiHealth();
-  const [activeFilter, setActiveFilter] = useState<FilterKey>("needs_review");
-  const [selectedID, setSelectedID] = useState<string | null>(null);
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIDs, setSelectedIDs] = useState<Set<string>>(() => new Set());
-  const visibleRuns = useMemo(() => activeFilter === "all" ? runs : runs.filter((run) => run.state === activeFilter), [activeFilter, runs]);
-  const selected = runs.find((run) => run.id === selectedID) || visibleRuns[0] || null;
+  const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null);
+  const visibleRuns = useMemo(() => filter === "all" ? runs : runs.filter((run) => run.state === filter), [filter, runs]);
+  // The record on screen is exactly the one the URL names. There is deliberately no fallback to
+  // the first visible record: that fallback is how a click meant for one record used to land on
+  // another after a poll re-sorted the queue or the selected record left the filter.
+  const selected = runId ? runs.find((run) => run.id === runId) ?? null : null;
   const bulkSelection = useMemo(() => runs.filter((run) => selectedIDs.has(run.id)), [runs, selectedIDs]);
+  const firstVisibleID = visibleRuns[0]?.id ?? null;
 
   useEffect(() => {
     const currentIDs = new Set(runs.map((run) => run.id));
@@ -43,9 +67,21 @@ function Dashboard({ contributor, onSignOut }: { contributor: Contributor; onSig
     });
   }, [runs]);
 
-  function changeFilter(filter: FilterKey) {
-    setActiveFilter(filter);
-    setSelectedID(null);
+  // Switching filters drops the record and leaves selection mode, whether the change came from a
+  // link, the back button or a pasted URL.
+  useEffect(() => {
+    setSelectionMode(false);
+    setSelectedIDs(new Set());
+  }, [filter]);
+
+  // A bare filter URL fills in the record it is already showing first. Replacing the entry keeps
+  // Back pointing at the previous view rather than walking back through each auto-selection.
+  useEffect(() => {
+    if (runId || loading || !firstVisibleID) return;
+    navigate(`/${filterSlug(filter)}/${firstVisibleID}`, { replace: true });
+  }, [runId, loading, firstVisibleID, filter, navigate]);
+
+  function leaveSelection() {
     setSelectionMode(false);
     setSelectedIDs(new Set());
   }
@@ -79,36 +115,44 @@ function Dashboard({ contributor, onSignOut }: { contributor: Contributor; onSig
     if (!result.failedIDs.length) setSelectionMode(false);
   }
 
-  async function deleteSelection() {
+  function requestDelete(run: Run) {
+    setPendingDelete({ kind: "single", run });
+  }
+
+  function requestBulkDelete() {
     if (!bulkSelection.length) return;
-    const published = bulkSelection.filter((run) => run.state === "published").length;
-    const publishedNote = published ? `\n\n${published} published ${published === 1 ? "record" : "records"} will also be removed from the public catalogue.` : "";
-    if (!window.confirm(`Permanently delete ${bulkSelection.length} selected ${bulkSelection.length === 1 ? "record" : "records"}?${publishedNote}`)) return;
-    const deletedSelectedRecord = selected ? selectedIDs.has(selected.id) : false;
-    const result = await removeMany(bulkSelection);
+    setPendingDelete({ kind: "bulk", runs: bulkSelection });
+  }
+
+  async function confirmDelete() {
+    const pending = pendingDelete;
+    if (!pending) return;
+    if (pending.kind === "single") {
+      const { run } = pending;
+      const deleted = await remove(run);
+      setPendingDelete(null);
+      // A deleted record cannot stay in the URL; the bare filter then selects whatever is left.
+      if (deleted) navigate(`/${filterSlug(filter)}`, { replace: true });
+      return;
+    }
+    const targets = pending.runs;
+    const result = await removeMany(targets);
+    setPendingDelete(null);
     setSelectedIDs(new Set(result.failedIDs));
-    if (deletedSelectedRecord && !result.failedIDs.includes(selected!.id)) setSelectedID(null);
     if (!result.failedIDs.length) setSelectionMode(false);
+    if (runId && targets.some((run) => run.id === runId) && !result.failedIDs.includes(runId)) navigate(`/${filterSlug(filter)}`, { replace: true });
   }
 
   async function submitURL(url: string) {
     const run = await create(url);
-    if (run) {
-      setSelectedID(run.id);
-      setActiveFilter("enriching");
-    }
+    if (run) navigate(`/enriching/${run.id}`);
     return run;
   }
 
   async function act(action: RunAction) {
     if (!selected) return;
     const next = await update(selected, action);
-    if (next) setActiveFilter(next.state);
-  }
-
-  async function deleteSelected() {
-    if (!selected) return;
-    if (await remove(selected)) setSelectedID(null);
+    if (next) navigate(`/${filterSlug(next.state)}/${next.id}`);
   }
 
   async function addManualEvidence(input: ManualEvidenceInput) {
@@ -143,20 +187,40 @@ function Dashboard({ contributor, onSignOut }: { contributor: Contributor; onSig
     await clearPhotoOverride(selected);
   }
 
+  const deleteRequest = pendingDelete ? deleteCopy(pendingDelete) : null;
+  const deletingPending = pendingDelete?.kind === "single" ? deletingID === pendingDelete.run.id : bulkBusy === "delete";
+
   return <main className="min-h-screen bg-paper text-ink">
     <AdminHeader connected={apiHealthy} contributor={contributor} onSignOut={onSignOut} />
     <div className="grid min-h-[calc(100vh-64px)] lg:grid-cols-[228px_minmax(0,1fr)]">
-      <AdminSidebar runs={runs} active={activeFilter} onChange={changeFilter} />
+      <AdminSidebar runs={runs} active={filter} onNavigate={leaveSelection} />
       <section className="min-w-0">
         <IngestionToolbar submitting={submitting} notice={notice} error={reconnecting && error ? `${error} Retrying automatically…` : error} onSubmit={submitURL} />
-        <div className="flex items-center gap-2 overflow-x-auto border-b border-ink/15 px-5 py-3 lg:hidden">{FILTERS.map(({ key, label }) => <button key={key} onClick={() => changeFilter(key)} className={`whitespace-nowrap rounded-md px-3 py-2 text-xs font-medium ${activeFilter === key ? "bg-moss text-white" : "border border-ink/15 bg-white/60"}`}>{label}</button>)}</div>
+        <div className="flex items-center gap-2 overflow-x-auto border-b border-ink/15 px-5 py-3 lg:hidden">{FILTERS.map(({ key, label }) => <Link key={key} to={`/${filterSlug(key)}`} onClick={leaveSelection} className={`focus-ring whitespace-nowrap rounded-md px-3 py-2 text-xs font-medium ${filter === key ? "bg-moss text-white" : "border border-ink/15 bg-white/60"}`}>{label}</Link>)}</div>
         <div className="grid min-h-[650px] xl:grid-cols-[390px_minmax(0,1fr)]">
-          <RunQueue runs={visibleRuns} loading={loading} activeFilter={activeFilter} selectedID={selected?.id || null} selectionMode={selectionMode} selectedIDs={selectedIDs} bulkBusy={bulkBusy} onSelect={setSelectedID} onToggleSelection={toggleRecordSelection} onToggleSelectionMode={toggleSelectionMode} onToggleAll={toggleAllVisible} onBulkPublish={() => void publishSelection()} onBulkDelete={() => void deleteSelection()} onRefresh={() => void load()} />
-          <div className="min-w-0 bg-[#f7f5ee]"><ReviewPanel run={selected} deleting={deletingID === selected?.id} savingEvidence={savingEvidence} onAction={(action) => void act(action)} onDelete={() => void deleteSelected()} onAddEvidence={addManualEvidence} onRemoveEvidence={(id) => void deleteManualEvidence(id)} onReplaceEvidence={editEvidence} onEvidenceAction={changeEvidence} onSavePhoto={savePhoto} onClearPhoto={() => void clearPhoto()} /></div>
+          <RunQueue runs={visibleRuns} loading={loading} activeFilter={filter} selectedID={selected?.id || null} selectionMode={selectionMode} selectedIDs={selectedIDs} bulkBusy={bulkBusy} onToggleSelection={toggleRecordSelection} onToggleSelectionMode={toggleSelectionMode} onToggleAll={toggleAllVisible} onBulkPublish={() => void publishSelection()} onBulkDelete={requestBulkDelete} onRefresh={() => void load()} />
+          <div className="min-w-0 bg-[#f7f5ee]"><ReviewPanel run={selected} deleting={deletingID === selected?.id} savingEvidence={savingEvidence} onAction={(action) => void act(action)} onDelete={() => { if (selected) requestDelete(selected); }} onAddEvidence={addManualEvidence} onRemoveEvidence={(id) => void deleteManualEvidence(id)} onReplaceEvidence={editEvidence} onEvidenceAction={changeEvidence} onSavePhoto={savePhoto} onClearPhoto={() => void clearPhoto()} /></div>
         </div>
       </section>
     </div>
+    {deleteRequest ? <ConfirmDialog title={deleteRequest.title} description={deleteRequest.description} confirmLabel={deleteRequest.confirmLabel} busy={deletingPending} onConfirm={() => void confirmDelete()} onCancel={() => setPendingDelete(null)} /> : null}
   </main>;
+}
+
+function deleteCopy(pending: PendingDelete) {
+  if (pending.kind === "single") return {
+    title: `Delete “${pending.run.name}”?`,
+    description: "This permanently removes the ingestion record and its extracted evidence.",
+    confirmLabel: "Delete record",
+  };
+  const count = pending.runs.length;
+  const published = pending.runs.filter((run) => run.state === "published").length;
+  const publishedNote = published ? `\n\n${published} published ${published === 1 ? "record" : "records"} will also be removed from the public catalogue.` : "";
+  return {
+    title: `Permanently delete ${count} selected ${count === 1 ? "record" : "records"}?`,
+    description: `This permanently removes their extracted evidence too.${publishedNote}`,
+    confirmLabel: count === 1 ? "Delete record" : `Delete ${count} records`,
+  };
 }
 
 export default App;
