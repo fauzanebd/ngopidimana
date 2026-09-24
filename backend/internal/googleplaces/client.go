@@ -347,6 +347,20 @@ func (client *Client) doJSON(request *http.Request, target any) error {
 	return nil
 }
 
+// venueNameMatches reports whether a Places candidate is the venue that was searched for.
+//
+// The comparison has to survive localization. Google returns displayName in the requested
+// language, and Indonesian listings are often shortened to the brand alone: searching
+// "Kipakane Indonesian Cuisine Menteng" with languageCode=id returns a candidate named
+// "Kipakane". So a candidate is accepted when either
+//
+//   - every token of the expected name appears in it — the listing is at least as specific
+//     as the name we extracted, or
+//   - every token of the candidate appears in the expected name *and* both start with the
+//     same token — the listing is the same venue under a shorter local name.
+//
+// Anything else is refused: binding the wrong place is worse than binding none, because the
+// ID is what every later Google fact is attributed to.
 func venueNameMatches(expected, actual string) bool {
 	expected, actual = normalize(expected), normalize(actual)
 	if expected == "" || actual == "" {
@@ -355,13 +369,30 @@ func venueNameMatches(expected, actual string) bool {
 	if expected == actual {
 		return true
 	}
-	paddedActual := " " + actual + " "
-	for _, token := range strings.Fields(expected) {
-		if len([]rune(token)) >= 2 && !strings.Contains(paddedActual, " "+token+" ") {
+	if containsAllTokens(actual, expected) {
+		return true
+	}
+	return containsAllTokens(expected, actual) && leadingToken(actual) == leadingToken(expected)
+}
+
+// containsAllTokens reports whether every whole word of needle appears in haystack, ignoring
+// single-character tokens that carry no identity.
+func containsAllTokens(haystack, needle string) bool {
+	padded := " " + haystack + " "
+	for _, token := range strings.Fields(needle) {
+		if len([]rune(token)) >= 2 && !strings.Contains(padded, " "+token+" ") {
 			return false
 		}
 	}
 	return true
+}
+
+func leadingToken(value string) string {
+	tokens := strings.Fields(value)
+	if len(tokens) == 0 {
+		return ""
+	}
+	return tokens[0]
 }
 
 func normalize(value string) string {

@@ -36,6 +36,49 @@ func TestResolvePlaceIDSelectsExactVenueAndStoresNoContent(t *testing.T) {
 	}
 }
 
+func TestResolvePlaceIDAcceptsALocalizedNameShortenedToTheBrand(t *testing.T) {
+	// Observed in production: with languageCode=id, the listing for a venue extracted as
+	// "Kipakane Indonesian Cuisine Menteng" comes back as "Kipakane". Refusing it left the
+	// record with no Place ID, so it could never be published — and re-ingesting the same
+	// URL failed the same way every time.
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/v1/places:searchText" {
+			t.Fatalf("unexpected request: %s", request.URL.Path)
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(`{"places":[{"id":"ChIJRTdSYF_1aS4Rx6rh_wZO5rA","displayName":{"text":"Kipakane"}}]}`))
+	}))
+	defer server.Close()
+
+	client := NewClient("test-key", server.URL, "id", "ID", "Jakarta, Indonesia", time.Second)
+	placeID, err := client.ResolvePlaceID(context.Background(), "Kipakane Indonesian Cuisine Menteng", "Menteng, Jakarta")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if placeID != "ChIJRTdSYF_1aS4Rx6rh_wZO5rA" {
+		t.Fatalf("resolved wrong place: %q", placeID)
+	}
+}
+
+func TestResolvePlaceIDRefusesAnUnrelatedVenue(t *testing.T) {
+	// The loosened comparison must not accept a candidate that merely shares a word: a
+	// candidate has to be built from the expected name's own tokens and share its brand.
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(`{"places":[
+			{"id":"coffee","displayName":{"text":"Kopi Kenangan"}},
+			{"id":"indonesian","displayName":{"text":"Indonesian Kitchen"}},
+			{"id":"brand-only","displayName":{"text":"Menteng"}}
+		]}`))
+	}))
+	defer server.Close()
+
+	client := NewClient("test-key", server.URL, "id", "ID", "Jakarta, Indonesia", time.Second)
+	if _, err := client.ResolvePlaceID(context.Background(), "Kipakane Indonesian Cuisine Menteng", "Menteng, Jakarta"); !errors.Is(err, ErrPlaceNotFound) {
+		t.Fatalf("an unrelated venue must not be bound: %v", err)
+	}
+}
+
 func TestGetPlaceRequestsOnlyDisplayFields(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		if request.URL.Path != "/v1/places/place-123" || request.URL.Query().Get("languageCode") != "id" {
