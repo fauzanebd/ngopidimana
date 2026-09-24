@@ -563,6 +563,21 @@ container's view before trusting a reload:
 docker compose -f deploy/compose.prod.yaml exec caddy grep -n 'WFC_API_HOST' /etc/caddy/Caddyfile
 ```
 
+**An in-place write also leaves the checkout dirty**, so the *next* `git pull`
+refuses with "Your local changes … would be overwritten by merge" until the file is
+committed and pulled. The recovery is always the same, and it is safe because the
+working file is the content you already deployed:
+
+```bash
+git fetch origin
+git diff --quiet origin/main -- deploy/Caddyfile && echo "identical — safe to reset"
+git reset --hard origin/main     # moves HEAD only; the file on disk is unchanged
+```
+
+Never `git checkout -- deploy/Caddyfile` here: that would restore the *previous*
+revision on disk and, on the next Caddy reload, point the certificate at whatever
+hostname that revision named.
+
 ### Why the Caddy transport has no read/write timeouts
 
 `read_timeout` and `write_timeout` on `transport http` make Caddy set per-request
