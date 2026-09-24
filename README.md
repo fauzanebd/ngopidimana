@@ -117,14 +117,18 @@ Each result carries `google_place_id` when the published place has one, which is
 
 Answers `404` when the place has no photo or Google rejects the id, and `503` when Google Places is unconfigured. The card falls back to its generated art in every one of those cases, so none of them is an error the UI shows.
 
+`POST /v1/places/{google_place_id}/photo/refresh` re-resolves a place whose image failed to load, answering with the same shape. It is public because visitors are the ones who see the failure, so it is bounded twice: one refresh per place per 5 minutes, and 200 refresh-triggered resolutions per day across the instance. Anything over that answers `429`, which the client treats as "no photo".
+
 **Two properties of this endpoint are deliberate — do not "optimise" them away:**
 
-1. **The image bytes never pass through this service.** `photo_url` points at Google, and the browser loads it directly. Google's Places policies forbid pre-fetching, caching, or storing place content (photos included); only `place_id` may be kept indefinitely. Downloading photos into our storage or a CDN would breach that, so the API resolves a URL and nothing more. The in-process cache holds a resolved *URL* for 10 minutes purely to avoid a second round trip — never image data.
-2. **The attribution is not decoration.** Google requires the photo's author to be credited wherever the photo appears, and the URL is short-lived, so the card must keep handling a photo that stops loading (it reverts to its gradient art).
+1. **The image bytes never pass through this service.** `photo_url` points at Google, and the browser loads it directly. Google's Places policies forbid pre-fetching, caching, or storing place content (photos included); only `place_id` may be kept indefinitely. Downloading photos into our storage or a CDN would breach that, so the API resolves a URL and nothing more. The in-process cache holds a resolved *URL* for 6 hours — never image data — and that long TTL is only sound because a dead URL can be reported (see the refresh endpoint above).
+2. **The attribution is not decoration.** Google requires the photo's author to be credited wherever the photo appears, and the URL is short-lived, so the card must keep handling a photo that stops loading (it reports the failure, then reverts to its gradient art if the refresh does not help).
 
-**Cost.** The expensive half of a photo is not the image: Place Photos bills at $7/1,000 while the Place Details lookup that yields a photo *name* bills at $20/1,000. So ingestion captures the photo reference while it is already making that Place Details call for reviews (free there), and the render path spends the stored reference on a single media call. A name Google has since expired costs one refresh lookup, after which the refreshed reference is stored again — the steady state is one $7/1,000 call per photo, not two calls. Both SKUs carry monthly free allowances, so a small catalogue sits inside them.
+**Cover photos the project owns take precedence.** An admin can attach an image per place (see Admin access). It is served ahead of Google's, is returned by this same endpoint with the same shape, needs no API key — so it works even when Google Places is unconfigured — and costs nothing per view.
 
-The frontend asks per card rather than for the whole result set, and the resolved URL is cached in-process for 10 minutes, which is what keeps a burst of searches from repeating work.
+**Cost.** The expensive half of a photo is not the image: Place Photos bills at $7/1,000 while the Place Details lookup that yields a photo *name* bills at $20/1,000. So ingestion captures the photo reference while it is already making that Place Details call for reviews (free there), and the render path spends the stored reference on a single media call. A name Google has since expired costs one refresh lookup, after which the refreshed reference is stored again — the steady state is one $7/1,000 call per photo, not two calls. An owned cover photo costs nothing at all.
+
+What actually drives the bill is **distinct places viewed per cache window**, not visitors, searches, or cards rendered: the URL is cached per place, so a thousand people viewing the same six cafés inside one window cost six calls. Thin traffic spread across the day costs more than a crowd does. Both SKUs carry free monthly allowances, so a small catalogue sits inside them.
 
 `locale` is optional and defaults to `en`. It accepts `en` or `id` (case-insensitive, region suffix ignored) and selects the language of the strings the service generates: requirement labels, the interpretation summary, `matched_on`, generated caveats, the evidence summary, and the fallback reason. Catalogue content — place names, areas, descriptions, and catalogue-authored caveats — is stored as authored and is not translated.
 
@@ -172,6 +176,15 @@ go -C backend run ./cmd/contributors remove someone@example.com
 ```
 
 `002_admin_auth.sql` seeds `fauzanebd@gmail.com` as the first owner. Roles are recorded but not enforced — every allowed contributor currently has full access to the catalogue.
+
+**Cover photos.** A place can carry an image the project owns or has rights to, served ahead of Google's (see the photo endpoint above). It is set per ingestion record, so it flows through review and publish like any other field:
+
+```text
+PUT    /v1/admin/ingestion-runs/{id}/photo   { "url": "https://…", "attribution": "Venue photo" }
+DELETE /v1/admin/ingestion-runs/{id}/photo
+```
+
+The URL must be an absolute `http(s)` one (at most 800 characters) and the attribution at most 200. Clearing records an explicit *none*, which publishing applies — deleting it from the record would leave the published place exactly as it is. Republishing only applies an override when the run actually carries one, so re-ingesting a place cannot silently drop the image an admin attached.
 
 Sign-in mail goes out over SMTP (`SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM`, `SMTP_TLS` = `starttls` | `implicit` | `none`). `starttls` on port 587 and `implicit` on 465 are the real-world settings; `none` sends in the clear and exists for a local relay such as Mailpit. With `SMTP_HOST` empty the API logs a startup warning and writes sign-in links to its own log instead of emailing them, which is how local development signs in without any provider. `ADMIN_APP_URL` is the admin origin the link points back to; `ADMIN_COOKIE_SAMESITE` (`lax` | `none`) and `ADMIN_COOKIE_DOMAIN` control the session cookie when the API and the admin app are on different origins.
 
