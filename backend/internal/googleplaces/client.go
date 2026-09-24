@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -83,6 +84,16 @@ type AddressComponent struct {
 	Types     []string `json:"types"`
 }
 
+// PlacePhoto is one entry of a place's `photos` field. `Name` is a resource name
+// such as `places/ChIJ…/photos/AeJ…`; it is short-lived and must not be stored as
+// if it were permanent (Google's Places policies forbid caching place content).
+type PlacePhoto struct {
+	Name               string              `json:"name"`
+	WidthPx            int                 `json:"widthPx,omitempty"`
+	HeightPx           int                 `json:"heightPx,omitempty"`
+	AuthorAttributions []AuthorAttribution `json:"authorAttributions,omitempty"`
+}
+
 type Place struct {
 	ID                  string             `json:"id"`
 	DisplayName         LocalizedText      `json:"displayName"`
@@ -96,6 +107,7 @@ type Place struct {
 	Rating              float64            `json:"rating,omitempty"`
 	UserRatingCount     int                `json:"userRatingCount,omitempty"`
 	Reviews             []Review           `json:"reviews"`
+	Photos              []PlacePhoto       `json:"photos,omitempty"`
 	Attributions        []Attribution      `json:"attributions,omitempty"`
 }
 
@@ -177,7 +189,7 @@ func (client *Client) GetPlace(ctx context.Context, placeID string) (Place, erro
 		return Place{}, fmt.Errorf("build Google Place Details request: %w", err)
 	}
 	request.Header.Set("X-Goog-Api-Key", client.apiKey)
-	request.Header.Set("X-Goog-FieldMask", "id,displayName,formattedAddress,addressComponents,googleMapsUri,websiteUri,location,regularOpeningHours,priceRange,rating,userRatingCount,reviews,attributions")
+	request.Header.Set("X-Goog-FieldMask", "id,displayName,formattedAddress,addressComponents,googleMapsUri,websiteUri,location,regularOpeningHours,priceRange,rating,userRatingCount,reviews,photos,attributions")
 	var place Place
 	if err := client.doJSON(request, &place); err != nil {
 		return Place{}, fmt.Errorf("Google Place Details: %w", err)
@@ -189,6 +201,52 @@ func (client *Client) GetPlace(ctx context.Context, placeID string) (Place, erro
 		place.Reviews = []Review{}
 	}
 	return place, nil
+}
+
+// PhotoMedia resolves a photo resource name into a short-lived URL the browser can
+// load directly. The image bytes never pass through this service, and the URL is
+// deliberately returned rather than the bytes so nothing is stored or re-hosted.
+func (client *Client) PhotoMedia(ctx context.Context, photoName string, maxWidthPx int) (string, error) {
+	if !client.Enabled() {
+		return "", ErrNotConfigured
+	}
+	if !validPhotoName(photoName) {
+		return "", ErrPlaceNotFound
+	}
+	if maxWidthPx < 1 || maxWidthPx > 4800 {
+		maxWidthPx = 800
+	}
+	query := url.Values{"maxWidthPx": {strconv.Itoa(maxWidthPx)}, "skipHttpRedirect": {"true"}}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, client.baseURL+"/v1/"+photoName+"/media?"+query.Encode(), nil)
+	if err != nil {
+		return "", fmt.Errorf("build Google photo request: %w", err)
+	}
+	request.Header.Set("X-Goog-Api-Key", client.apiKey)
+	var media struct {
+		Name     string `json:"name"`
+		PhotoURI string `json:"photoUri"`
+	}
+	if err := client.doJSON(request, &media); err != nil {
+		return "", fmt.Errorf("Google Place Photo: %w", err)
+	}
+	if strings.TrimSpace(media.PhotoURI) == "" {
+		return "", ErrPlaceNotFound
+	}
+	return media.PhotoURI, nil
+}
+
+// validPhotoName accepts only the resource shape the Places API issues, so a value
+// from an upstream response can be placed in a request path without escaping
+// concerns.
+func validPhotoName(name string) bool {
+	parts := strings.Split(name, "/")
+	if len(parts) != 4 || parts[0] != "places" || parts[2] != "photos" {
+		return false
+	}
+	if parts[1] == "" || parts[3] == "" {
+		return false
+	}
+	return !strings.ContainsAny(name, "?#%")
 }
 
 func (client *Client) doJSON(request *http.Request, target any) error {

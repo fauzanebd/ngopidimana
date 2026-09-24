@@ -16,6 +16,7 @@ type HealthChecker interface{ Ping(context.Context) error }
 type GooglePlacesClient interface {
 	Enabled() bool
 	GetPlace(context.Context, string) (googleplaces.Place, error)
+	PhotoMedia(context.Context, string, int) (string, error)
 }
 
 type Server struct {
@@ -25,6 +26,7 @@ type Server struct {
 	health          HealthChecker
 	auth            AuthService
 	cookies         CookiePolicy
+	photos          photoCache
 }
 
 // Options is everything NewServer needs. It is a struct rather than a parameter
@@ -48,6 +50,7 @@ func NewServer(options Options) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", server.healthz)
 	mux.HandleFunc("POST /v1/recommendations", server.recommend)
+	mux.HandleFunc("GET /v1/places/{googlePlaceID}/photo", server.placePhotoHandler)
 	mux.HandleFunc("POST /v1/auth/request-link", server.requestLink)
 	mux.HandleFunc("POST /v1/auth/verify", server.verifyLogin)
 	mux.HandleFunc("GET /v1/auth/session", server.session)

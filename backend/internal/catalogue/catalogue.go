@@ -282,7 +282,7 @@ func deriveScores(fields map[string]ingestion.EvidenceField, facts []fact) map[s
 
 func (store *Store) ListPublished(ctx context.Context) ([]recommendation.Cafe, error) {
 	rows, err := store.db.QueryContext(ctx, `SELECT p.id::text, p.name, l.area, l.address,
-		ST_Y(l.geog::geometry), ST_X(l.geog::geometry), p.updated_at
+		ST_Y(l.geog::geometry), ST_X(l.geog::geometry), p.updated_at, coalesce(p.google_place_id, '')
 		FROM places p JOIN place_locations l ON l.place_id = p.id WHERE p.status = 'published' ORDER BY p.name`)
 	if err != nil {
 		return nil, err
@@ -293,7 +293,7 @@ func (store *Store) ListPublished(ctx context.Context) ([]recommendation.Cafe, e
 	for rows.Next() {
 		var cafe recommendation.Cafe
 		var updated time.Time
-		if err := rows.Scan(&cafe.ID, &cafe.Name, &cafe.Area, &cafe.Address, &cafe.Lat, &cafe.Lng, &updated); err != nil {
+		if err := rows.Scan(&cafe.ID, &cafe.Name, &cafe.Area, &cafe.Address, &cafe.Lat, &cafe.Lng, &updated, &cafe.GooglePlaceID); err != nil {
 			return nil, err
 		}
 		cafe.Scores, cafe.Evidence, cafe.Facts = map[string]float64{}, map[string]float64{}, map[string]bool{}

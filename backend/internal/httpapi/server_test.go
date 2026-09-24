@@ -21,6 +21,9 @@ func (testGooglePlaces) Enabled() bool { return true }
 func (provider testGooglePlaces) GetPlace(context.Context, string) (googleplaces.Place, error) {
 	return provider.place, nil
 }
+func (testGooglePlaces) PhotoMedia(context.Context, string, int) (string, error) {
+	return "", googleplaces.ErrPlaceNotFound
+}
 
 func TestGetGooglePlaceReturnsUncachedLiveDetails(t *testing.T) {
 	store := ingestion.NewMemoryStore()

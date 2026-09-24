@@ -36,6 +36,7 @@ type Interpretation struct {
 
 type Cafe struct {
 	ID              string
+	GooglePlaceID   string
 	Name            string
 	Area            string
 	Address         string
@@ -64,6 +65,7 @@ type ReviewLink struct {
 
 type Recommendation struct {
 	PlaceID          string             `json:"place_id"`
+	GooglePlaceID    string             `json:"google_place_id,omitempty"`
 	Name             string             `json:"name"`
 	Area             string             `json:"area"`
 	Address          string             `json:"address"`

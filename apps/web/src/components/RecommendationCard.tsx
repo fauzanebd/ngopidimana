@@ -1,17 +1,27 @@
 import { ArrowUpRight, Check, ChevronDown, CircleAlert, Clock3, ExternalLink, Gauge, MapPin } from "lucide-react";
 import { useI18n } from "../i18n";
 import { formatRupiah } from "../lib/format";
+import { usePlacePhoto } from "../hooks/usePlacePhoto";
 import type { Recommendation } from "../types";
 
 type Props = { place: Recommendation; rank: number; showDistance: boolean; expanded: boolean; onExpand: () => void };
 
 export function RecommendationCard({ place, rank, showDistance, expanded, onExpand }: Props) {
   const { messages } = useI18n();
+  const { photoURL, attribution, reportBroken } = usePlacePhoto(place.google_place_id);
+  const credit = photoURL && attribution?.name ? attribution : null;
+  const creditClass = "absolute bottom-2 left-2 max-w-[calc(100%-1rem)] truncate rounded-md bg-ink/60 px-1.5 py-1 text-[10px] font-medium text-white backdrop-blur-sm";
   return <article className="result-card animate-soft-in overflow-hidden rounded-xl border border-ink/15 bg-[#fffdf7]/95 transition duration-200 hover:border-ink/30" style={{ animationDelay: `${Math.min(rank * 25, 250)}ms` }}>
     <div className="grid sm:grid-cols-[122px_1fr]">
-      <div className={`place-art art-${place.accent} relative min-h-[96px] overflow-hidden border-b border-ink/10 sm:min-h-full sm:border-b-0 sm:border-r`} aria-hidden="true">
-        <span className="absolute left-3 top-3 grid h-7 min-w-7 place-items-center rounded-md border border-white/40 bg-white/70 px-1.5 text-xs font-semibold text-ink backdrop-blur">{String(rank).padStart(2, "0")}</span>
+      {/* The gradient and its leaves stay underneath the photo, so an absent, pending or broken
+          image simply shows today's art — never an empty box, a broken icon or a layout shift. */}
+      <div className={`place-art art-${place.accent} relative min-h-[96px] overflow-hidden border-b border-ink/10 sm:min-h-full sm:border-b-0 sm:border-r`} aria-hidden={photoURL ? undefined : true}>
+        <span aria-hidden="true" className="absolute left-3 top-3 grid h-7 min-w-7 place-items-center rounded-md border border-white/40 bg-white/70 px-1.5 text-xs font-semibold text-ink backdrop-blur">{String(rank).padStart(2, "0")}</span>
         <div className="leaf-shape leaf-a" /><div className="leaf-shape leaf-b" />
+        {photoURL ? <img src={photoURL} alt="" onError={reportBroken} className="absolute inset-0 h-full w-full object-cover" /> : null}
+        {credit ? (credit.uri
+          ? <a className={`focus-ring ${creditClass} transition hover:bg-ink/75`} href={credit.uri} target="_blank" rel="noreferrer">{messages.photoCredit(credit.name)}</a>
+          : <span className={creditClass}>{messages.photoCredit(credit.name)}</span>) : null}
       </div>
       <div className="p-4 sm:p-5">
         <div className="flex items-start gap-3">

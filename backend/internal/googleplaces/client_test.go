@@ -68,3 +68,45 @@ func TestDisabledClientRejectsRequests(t *testing.T) {
 		t.Fatalf("expected not configured, got %v", err)
 	}
 }
+
+func TestPhotoMediaResolvesShortLivedURLWithoutFetchingBytes(t *testing.T) {
+	var seenPath, seenQuery string
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		seenPath, seenQuery = request.URL.Path, request.URL.RawQuery
+		if request.Header.Get("X-Goog-Api-Key") != "test-key" {
+			t.Fatal("missing API key header")
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(`{"name":"places/place-123/photos/AeJ","photoUri":"https://lh3.googleusercontent.com/abc"}`))
+	}))
+	defer server.Close()
+
+	client := NewClient("test-key", server.URL, "id", "ID", "Jakarta", time.Second)
+	photoURL, err := client.PhotoMedia(context.Background(), "places/place-123/photos/AeJ", 800)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if photoURL != "https://lh3.googleusercontent.com/abc" {
+		t.Fatalf("photo url = %q", photoURL)
+	}
+	if seenPath != "/v1/places/place-123/photos/AeJ/media" {
+		t.Fatalf("request path = %q", seenPath)
+	}
+	// skipHttpRedirect keeps the response JSON so the bytes are never pulled
+	// through this service, and the width keeps the media small.
+	if !strings.Contains(seenQuery, "skipHttpRedirect=true") || !strings.Contains(seenQuery, "maxWidthPx=800") {
+		t.Fatalf("request query = %q", seenQuery)
+	}
+}
+
+func TestPhotoMediaRejectsNamesThatAreNotPhotoResources(t *testing.T) {
+	client := NewClient("test-key", "https://places.googleapis.com", "id", "ID", "Jakarta", time.Second)
+	for _, name := range []string{
+		"", "places/place-123", "places//photos/AeJ", "places/place-123/photos/",
+		"places/place-123/photos/AeJ/extra", "../../etc/passwd", "places/place-123/photos/AeJ?x=1",
+	} {
+		if _, err := client.PhotoMedia(context.Background(), name, 800); err == nil {
+			t.Fatalf("PhotoMedia accepted %q", name)
+		}
+	}
+}

@@ -168,7 +168,7 @@ func RankCafes(cafes []Cafe, profile Interpretation, userLocation *Point, locale
 			mapsURL = "https://www.google.com/maps/search/?api=1&query=" + strings.ReplaceAll(cafe.Name+" "+cafe.Area+" Jakarta", " ", "+")
 		}
 		results = append(results, Recommendation{
-			PlaceID: cafe.ID, Name: cafe.Name, Area: cafe.Area, Address: cafe.Address, MatchScore: round(final),
+			PlaceID: cafe.ID, GooglePlaceID: cafe.GooglePlaceID, Name: cafe.Name, Area: cafe.Area, Address: cafe.Address, MatchScore: round(final),
 			ResultConfidence: round(confidence), MatchedOn: matched, Caveats: caveats,
 			MapsURL: mapsURL, ReviewLinks: links,
 			PriceMin: cafe.PriceMin, PriceMax: cafe.PriceMax, DistanceKM: math.Round(distance*10) / 10,

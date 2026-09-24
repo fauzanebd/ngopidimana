@@ -29,6 +29,7 @@ export type Messages = {
   whyThisFits: string;
   review: string;
   openMaps: string;
+  photoCredit: (name: string) => string;
   scoreBreakdown: string;
   evidenceNote: string;
   scoreComponents: Record<string, string>;
@@ -65,6 +66,7 @@ const en: Messages = {
   whyThisFits: "Why this fits",
   review: "Review",
   openMaps: "Open Maps",
+  photoCredit: (name) => `Photo: ${name}`,
   scoreBreakdown: "Score breakdown",
   evidenceNote: "Evidence note",
   scoreComponents: { preference_fit: "Preference fit", facilities: "Facilities", distance: "Distance", budget: "Budget", freshness: "Freshness" },
@@ -106,6 +108,7 @@ const id: Messages = {
   whyThisFits: "Kenapa cocok",
   review: "Ulasan",
   openMaps: "Buka Maps",
+  photoCredit: (name) => `Foto: ${name}`,
   scoreBreakdown: "Rincian skor",
   evidenceNote: "Catatan bukti",
   scoreComponents: { preference_fit: "Kesesuaian preferensi", facilities: "Fasilitas", distance: "Jarak", budget: "Budget", freshness: "Kebaruan data" },

@@ -31,6 +31,35 @@ export async function fetchRecommendations(query: string, locale: Locale, signal
   return body;
 }
 
+export type PlacePhoto = {
+  /** Short-lived Google URL. Loaded by the browser straight from Google, never proxied or stored. */
+  photoURL: string;
+  attribution: { name: string; uri: string } | null;
+};
+
+/**
+ * Resolves to null — never throws, never logs — for every expected miss: a place
+ * without a photo, an unknown id, an unconfigured Places key, an expired URL or a
+ * dropped connection. A missing photo is normal, so the card simply keeps its art.
+ */
+export async function fetchPlacePhoto(googlePlaceID: string, signal: AbortSignal): Promise<PlacePhoto | null> {
+  try {
+    const response = await fetch(`${import.meta.env.VITE_API_BASE_URL ?? ""}/v1/places/${encodeURIComponent(googlePlaceID)}/photo`, { signal });
+    if (!response.ok) return null;
+    const body = await response.json();
+    if (typeof body?.photo_url !== "string" || body.photo_url.length === 0) return null;
+    const attribution = body.attribution;
+    return {
+      photoURL: body.photo_url,
+      attribution: attribution && typeof attribution === "object"
+        ? { name: typeof attribution.name === "string" ? attribution.name : "", uri: typeof attribution.uri === "string" ? attribution.uri : "" }
+        : null,
+    };
+  } catch {
+    return null;
+  }
+}
+
 const nearbyPattern = /\b(?:near me|nearby|around me|sekitar saya|dekat saya|di sekitar sini|dekat sini)\b/i;
 const namedLocationPattern = /\b(?:blok m|melawai|kemang|cipete|senopati|scbd|tebet|cilandak|lebak bulus|pondok labu|rawamangun|duren sawit|jakarta selatan|jaksel|south jakarta|jakarta timur|jaktim|east jakarta|jakarta pusat|jakpus|central jakarta|jakarta barat|jakbar|west jakarta|jakarta utara|jakut|north jakarta)\b/i;
 

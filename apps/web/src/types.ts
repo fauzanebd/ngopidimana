@@ -27,6 +27,8 @@ export type Recommendation = {
   accent: string;
   evidence_summary: string;
   score_components: Record<string, number>;
+  /** Google Places id, present only for places sourced from Google. */
+  google_place_id?: string;
 };
 
 export type RecommendationResponse = {
