@@ -124,3 +124,24 @@ func TestNotFoundIsReportedAsAMissingPlace(t *testing.T) {
 		t.Fatalf("GetPlace on a missing id = %v, want ErrPlaceNotFound", err)
 	}
 }
+
+func TestPrimaryPhotoSkipsUnusablePhotosAndKeepsAttribution(t *testing.T) {
+	place := Place{Photos: []PlacePhoto{
+		{Name: "   "},
+		{Name: "places/p/photos/first", AuthorAttributions: []AuthorAttribution{{DisplayName: "  "}, {DisplayName: "Tika Anggi", URI: "https://maps.google.com/contrib/1"}}},
+		{Name: "places/p/photos/second"},
+	}}
+	reference := place.PrimaryPhoto()
+	if reference == nil || reference.Name != "places/p/photos/first" {
+		t.Fatalf("primary photo = %#v, want the first photo with a reference", reference)
+	}
+	if reference.AttributionName != "Tika Anggi" || reference.AttributionURI != "https://maps.google.com/contrib/1" {
+		t.Fatalf("attribution = %#v, want the first author with a name", reference)
+	}
+	if references := place.PhotoRefs(); len(references) != 2 {
+		t.Fatalf("usable references = %d, want 2 (the nameless one skipped)", len(references))
+	}
+	if empty := (Place{}).PrimaryPhoto(); empty != nil {
+		t.Fatalf("a place with no photos returned %#v", empty)
+	}
+}

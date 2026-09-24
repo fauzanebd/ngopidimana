@@ -204,7 +204,7 @@ func TestProcessorExtractsEvidenceAndMovesToReview(t *testing.T) {
 	processor := NewProcessor(store, fakeExtractor{result: ExtractedRecord{
 		Name: "Kopi Test", Confidence: .9,
 		Fields: []EvidenceField{{Key: "Identity", Value: "Kopi Test", Source: "Page metadata", SourceURL: run.URL, Confidence: .9}},
-	}}, fakePlaceResolver{placeID: "place-123", place: googleplaces.Place{GoogleMapsURI: "https://maps.google.com/place", Rating: 4.8, UserRatingCount: 20, Reviews: []googleplaces.Review{{Rating: 5, Text: googleplaces.LocalizedText{Text: "Wi-Fi cepat dan banyak colokan"}, AuthorAttribution: googleplaces.AuthorAttribution{DisplayName: "Reviewer"}, GoogleMapsURI: "https://maps.google.com/review/1"}}}}, fakeDiscoverer{result: []DiscoveredSource{{Title: "Kopi Test menu", URL: "https://menu.example/menu", Excerpt: "Coffee and Wi-Fi"}}}, nil)
+	}}, fakePlaceResolver{placeID: "place-123", place: googleplaces.Place{GoogleMapsURI: "https://maps.google.com/place", Rating: 4.8, UserRatingCount: 20, Reviews: []googleplaces.Review{{Rating: 5, Text: googleplaces.LocalizedText{Text: "Wi-Fi cepat dan banyak colokan"}, AuthorAttribution: googleplaces.AuthorAttribution{DisplayName: "Reviewer"}, GoogleMapsURI: "https://maps.google.com/review/1"}}, Photos: []googleplaces.PlacePhoto{{Name: "places/place-123/photos/AeJ", WidthPx: 4032, HeightPx: 3024, AuthorAttributions: []googleplaces.AuthorAttribution{{DisplayName: "Tika Anggi", URI: "https://maps.google.com/contrib/1"}}}}}}, fakeDiscoverer{result: []DiscoveredSource{{Title: "Kopi Test menu", URL: "https://menu.example/menu", Excerpt: "Coffee and Wi-Fi"}}}, nil)
 	payload, _ := json.Marshal(taskPayload{RunID: run.ID, URL: run.URL})
 	if err := processor.Handle(t.Context(), asynq.NewTask(TaskTypeEnrich, payload)); err != nil {
 		t.Fatal(err)
@@ -225,6 +225,11 @@ func TestProcessorExtractsEvidenceAndMovesToReview(t *testing.T) {
 	}
 	if updated.GooglePlaceID != "place-123" {
 		t.Fatalf("stable Google Place ID was not stored: %#v", updated)
+	}
+	// The photo reference rides along on the Place Details call the worker already
+	// makes, so the render path can skip its own lookup.
+	if updated.Photo == nil || updated.Photo.Name != "places/place-123/photos/AeJ" || updated.Photo.AttributionName != "Tika Anggi" {
+		t.Fatalf("photo reference was not captured: %#v", updated.Photo)
 	}
 }
 

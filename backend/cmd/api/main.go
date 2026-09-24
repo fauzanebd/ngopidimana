@@ -95,6 +95,7 @@ func main() {
 			Health:          redisHealth{redisClient},
 			CORSOrigins:     cfg.CORSOrigin,
 			Auth:            authService,
+			PhotoStore:      catalogueStore,
 			Cookies: httpapi.CookiePolicy{
 				Name:     "wfc_admin_session",
 				Domain:   cfg.AdminCookieDomain,

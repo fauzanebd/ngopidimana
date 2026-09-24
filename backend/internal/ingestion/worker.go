@@ -77,6 +77,7 @@ func (p *Processor) Handle(ctx context.Context, task *asynq.Task) error {
 				} else {
 					record = mergeGooglePlaceEvidence(record, place, time.Now().UTC())
 					run.Fields = record.Fields
+					run.Photo = place.PrimaryPhoto()
 				}
 			}
 		}

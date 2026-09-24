@@ -182,3 +182,88 @@ func TestPlacePhotoRejectedIDIsNotFoundNotAGatewayError(t *testing.T) {
 		t.Fatalf("status = %d, want 502 when Google refuses us", response.Code)
 	}
 }
+
+// fakePhotoStore stands in for the catalogue's stored references.
+type fakePhotoStore struct {
+	stored   map[string]googleplaces.PhotoRef
+	saves    int
+	lastSave googleplaces.PhotoRef
+}
+
+func (store *fakePhotoStore) PhotoRef(_ context.Context, googlePlaceID string) (googleplaces.PhotoRef, bool, error) {
+	reference, found := store.stored[googlePlaceID]
+	return reference, found, nil
+}
+
+func (store *fakePhotoStore) SavePhotoRef(_ context.Context, googlePlaceID string, reference googleplaces.PhotoRef) error {
+	if store.stored == nil {
+		store.stored = map[string]googleplaces.PhotoRef{}
+	}
+	store.stored[googlePlaceID] = reference
+	store.saves++
+	store.lastSave = reference
+	return nil
+}
+
+func TestPlacePhotoUsesTheStoredReferenceWithoutALookup(t *testing.T) {
+	// This is the whole point of storing the reference: rendering costs one media
+	// call ($7/1000) and no Place Details lookup ($20/1000).
+	fake := &photoGooglePlaces{mediaURL: "https://lh3.googleusercontent.com/abc"}
+	store := &fakePhotoStore{stored: map[string]googleplaces.PhotoRef{
+		"ChIJtest": {Name: "places/ChIJtest/photos/AeJ", AttributionName: "Tika Anggi", AttributionURI: "https://maps.google.com/contrib/1"},
+	}}
+	server := photoServer(fake)
+	server.photoStore = store
+
+	response := getPhoto(t, server, "/v1/places/ChIJtest/photo")
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", response.Code, response.Body.String())
+	}
+	var photo placePhoto
+	if err := json.Unmarshal(response.Body.Bytes(), &photo); err != nil {
+		t.Fatal(err)
+	}
+	if photo.URL != "https://lh3.googleusercontent.com/abc" || photo.Attribution.Name != "Tika Anggi" {
+		t.Fatalf("photo = %#v", photo)
+	}
+	if fake.placeCalls != 0 {
+		t.Fatalf("stored reference still cost %d Place Details lookups, want 0", fake.placeCalls)
+	}
+	if fake.mediaCalls != 1 {
+		t.Fatalf("media calls = %d, want 1", fake.mediaCalls)
+	}
+}
+
+func TestPlacePhotoRefreshesAnExpiredStoredReference(t *testing.T) {
+	fake := &photoGooglePlaces{
+		place: googleplaces.Place{ID: "ChIJtest", Photos: []googleplaces.PlacePhoto{{
+			Name: "places/ChIJtest/photos/fresh", AuthorAttributions: []googleplaces.AuthorAttribution{{DisplayName: "New Author", URI: "https://maps.google.com/contrib/2"}},
+		}}},
+		mediaURL:    "https://lh3.googleusercontent.com/fresh",
+		mediaErrors: map[string]error{"places/ChIJtest/photos/stale": errors.New("expired photo name")},
+	}
+	store := &fakePhotoStore{stored: map[string]googleplaces.PhotoRef{
+		"ChIJtest": {Name: "places/ChIJtest/photos/stale", AttributionName: "Old Author"},
+	}}
+	server := photoServer(fake)
+	server.photoStore = store
+
+	response := getPhoto(t, server, "/v1/places/ChIJtest/photo")
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", response.Code, response.Body.String())
+	}
+	var photo placePhoto
+	if err := json.Unmarshal(response.Body.Bytes(), &photo); err != nil {
+		t.Fatal(err)
+	}
+	if photo.URL != "https://lh3.googleusercontent.com/fresh" || photo.Attribution.Name != "New Author" {
+		t.Fatalf("photo = %#v", photo)
+	}
+	if fake.placeCalls != 1 || fake.mediaCalls != 2 {
+		t.Fatalf("calls = place:%d media:%d, want 1 lookup then 2 media attempts", fake.placeCalls, fake.mediaCalls)
+	}
+	// The refreshed name is kept, so the next render is cheap again.
+	if store.saves != 1 || store.lastSave.Name != "places/ChIJtest/photos/fresh" || store.lastSave.AttributionName != "New Author" {
+		t.Fatalf("stored = %#v after %d saves", store.lastSave, store.saves)
+	}
+}

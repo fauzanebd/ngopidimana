@@ -3,6 +3,8 @@ package ingestion
 import (
 	"context"
 	"time"
+
+	"github.com/fauzanebd/wheretowfc/backend/internal/googleplaces"
 )
 
 type EvidenceField struct {
@@ -44,6 +46,7 @@ type Run struct {
 	Warnings      []string        `json:"warnings"`
 	Fields        []EvidenceField `json:"fields"`
 	GooglePlaceID string          `json:"google_place_id,omitempty"`
+	Photo         *googleplaces.PhotoRef `json:"photo,omitempty"`
 	CreatedAt     time.Time       `json:"created_at"`
 	UpdatedAt     time.Time       `json:"updated_at"`
 }

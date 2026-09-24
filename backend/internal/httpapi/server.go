@@ -19,6 +19,13 @@ type GooglePlacesClient interface {
 	PhotoMedia(context.Context, string, int) (string, error)
 }
 
+// PlacePhotoStore reads and writes the photo reference captured at ingestion, which
+// is what lets the render path skip the pricey Place Details lookup.
+type PlacePhotoStore interface {
+	PhotoRef(ctx context.Context, googlePlaceID string) (googleplaces.PhotoRef, bool, error)
+	SavePhotoRef(ctx context.Context, googlePlaceID string, reference googleplaces.PhotoRef) error
+}
+
 type Server struct {
 	recommendations *recommendation.Service
 	ingestion       *ingestion.Service
@@ -26,6 +33,7 @@ type Server struct {
 	health          HealthChecker
 	auth            AuthService
 	cookies         CookiePolicy
+	photoStore      PlacePhotoStore
 	photos          photoCache
 }
 
@@ -40,12 +48,13 @@ type Options struct {
 	CORSOrigins     string
 	Auth            AuthService
 	Cookies         CookiePolicy
+	PhotoStore      PlacePhotoStore
 }
 
 func NewServer(options Options) http.Handler {
 	server := &Server{
 		recommendations: options.Recommendations, ingestion: options.Ingestion, googlePlaces: options.GooglePlaces,
-		health: options.Health, auth: options.Auth, cookies: options.Cookies,
+		health: options.Health, auth: options.Auth, cookies: options.Cookies, photoStore: options.PhotoStore,
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", server.healthz)

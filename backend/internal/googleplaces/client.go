@@ -107,6 +107,52 @@ type PlacePhoto struct {
 	AuthorAttributions []AuthorAttribution `json:"authorAttributions,omitempty"`
 }
 
+// PhotoRef is a photo reference together with the attribution that must be shown
+// wherever the photo is displayed. It is a reference, not content: it resolves to
+// a short-lived URL on demand and may have expired by the time it is used.
+type PhotoRef struct {
+	Name            string
+	AttributionName string
+	AttributionURI  string
+}
+
+// PhotoRefs lists usable photo references in Google's order, each with the
+// attribution that must be displayed beside it. Photos with no reference are skipped.
+func (place Place) PhotoRefs() []PhotoRef {
+	references := make([]PhotoRef, 0, len(place.Photos))
+	for _, photo := range place.Photos {
+		if reference, ok := photo.Ref(); ok {
+			references = append(references, reference)
+		}
+	}
+	return references
+}
+
+// Ref turns one photo into the reference the catalogue stores and serves.
+func (photo PlacePhoto) Ref() (PhotoRef, bool) {
+	name := strings.TrimSpace(photo.Name)
+	if name == "" {
+		return PhotoRef{}, false
+	}
+	reference := PhotoRef{Name: name}
+	for _, author := range photo.AuthorAttributions {
+		if displayName := strings.TrimSpace(author.DisplayName); displayName != "" {
+			reference.AttributionName = displayName
+			reference.AttributionURI = strings.TrimSpace(author.URI)
+			break
+		}
+	}
+	return reference, true
+}
+
+// PrimaryPhoto is the one ingestion captures: the first usable reference.
+func (place Place) PrimaryPhoto() *PhotoRef {
+	if references := place.PhotoRefs(); len(references) > 0 {
+		return &references[0]
+	}
+	return nil
+}
+
 type Place struct {
 	ID                  string             `json:"id"`
 	DisplayName         LocalizedText      `json:"displayName"`
