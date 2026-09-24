@@ -33,22 +33,22 @@ type ManualEvidenceInput struct {
 }
 
 type Run struct {
-	ID            string          `json:"id"`
-	URL           string          `json:"url"`
-	Source        string          `json:"source"`
-	State         string          `json:"state"`
-	Stage         string          `json:"stage"`
-	Progress      int             `json:"progress"`
-	Name          string          `json:"name"`
-	Area          string          `json:"area,omitempty"`
-	Confidence    float64         `json:"confidence"`
-	Issues        []string        `json:"issues"`
-	Warnings      []string        `json:"warnings"`
-	Fields        []EvidenceField `json:"fields"`
-	GooglePlaceID string          `json:"google_place_id,omitempty"`
+	ID            string                 `json:"id"`
+	URL           string                 `json:"url"`
+	Source        string                 `json:"source"`
+	State         string                 `json:"state"`
+	Stage         string                 `json:"stage"`
+	Progress      int                    `json:"progress"`
+	Name          string                 `json:"name"`
+	Area          string                 `json:"area,omitempty"`
+	Confidence    float64                `json:"confidence"`
+	Issues        []string               `json:"issues"`
+	Warnings      []string               `json:"warnings"`
+	Fields        []EvidenceField        `json:"fields"`
+	GooglePlaceID string                 `json:"google_place_id,omitempty"`
 	Photo         *googleplaces.PhotoRef `json:"photo,omitempty"`
-	CreatedAt     time.Time       `json:"created_at"`
-	UpdatedAt     time.Time       `json:"updated_at"`
+	CreatedAt     time.Time              `json:"created_at"`
+	UpdatedAt     time.Time              `json:"updated_at"`
 }
 
 type DiscoverySeed struct {
