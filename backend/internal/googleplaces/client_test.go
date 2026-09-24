@@ -2,6 +2,7 @@ package googleplaces
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -108,5 +109,18 @@ func TestPhotoMediaRejectsNamesThatAreNotPhotoResources(t *testing.T) {
 		if _, err := client.PhotoMedia(context.Background(), name, 800); err == nil {
 			t.Fatalf("PhotoMedia accepted %q", name)
 		}
+	}
+}
+
+func TestNotFoundIsReportedAsAMissingPlace(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.WriteHeader(http.StatusNotFound)
+		_, _ = writer.Write([]byte(`{"error":{"message":"Place not found","status":"NOT_FOUND"}}`))
+	}))
+	defer server.Close()
+
+	client := NewClient("test-key", server.URL, "id", "ID", "Jakarta", time.Second)
+	if _, err := client.GetPlace(context.Background(), "ChIJmissing"); !errors.Is(err, ErrPlaceNotFound) {
+		t.Fatalf("GetPlace on a missing id = %v, want ErrPlaceNotFound", err)
 	}
 }

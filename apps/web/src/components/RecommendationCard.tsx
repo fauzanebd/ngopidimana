@@ -10,7 +10,10 @@ export function RecommendationCard({ place, rank, showDistance, expanded, onExpa
   const { messages } = useI18n();
   const { photoURL, attribution, reportBroken } = usePlacePhoto(place.google_place_id);
   const credit = photoURL && attribution?.name ? attribution : null;
-  const creditClass = "absolute bottom-2 left-2 max-w-[calc(100%-1rem)] truncate rounded-md bg-ink/60 px-1.5 py-1 text-[10px] font-medium text-white backdrop-blur-sm";
+  // The credit is what Google's terms require to stay visible with the photo, so it wraps to a
+  // second line rather than truncating to something unreadable, and always carries the full text
+  // as a tooltip.
+  const creditClass = "absolute bottom-2 left-2 max-w-[calc(100%-1rem)] line-clamp-2 rounded-md bg-ink/60 px-1.5 py-1 text-[10px] font-medium leading-tight text-white backdrop-blur-sm";
   return <article className="result-card animate-soft-in overflow-hidden rounded-xl border border-ink/15 bg-[#fffdf7]/95 transition duration-200 hover:border-ink/30" style={{ animationDelay: `${Math.min(rank * 25, 250)}ms` }}>
     <div className="grid sm:grid-cols-[122px_1fr]">
       {/* The gradient and its leaves stay underneath the photo, so an absent, pending or broken
@@ -20,8 +23,8 @@ export function RecommendationCard({ place, rank, showDistance, expanded, onExpa
         <div className="leaf-shape leaf-a" /><div className="leaf-shape leaf-b" />
         {photoURL ? <img src={photoURL} alt="" onError={reportBroken} className="absolute inset-0 h-full w-full object-cover" /> : null}
         {credit ? (credit.uri
-          ? <a className={`focus-ring ${creditClass} transition hover:bg-ink/75`} href={credit.uri} target="_blank" rel="noreferrer">{messages.photoCredit(credit.name)}</a>
-          : <span className={creditClass}>{messages.photoCredit(credit.name)}</span>) : null}
+          ? <a className={`focus-ring ${creditClass} transition hover:bg-ink/75`} href={credit.uri} target="_blank" rel="noreferrer" title={messages.photoCredit(credit.name)}>{messages.photoCredit(credit.name)}</a>
+          : <span className={creditClass} title={messages.photoCredit(credit.name)}>{messages.photoCredit(credit.name)}</span>) : null}
       </div>
       <div className="p-4 sm:p-5">
         <div className="flex items-start gap-3">

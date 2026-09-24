@@ -264,6 +264,11 @@ func (client *Client) doJSON(request *http.Request, target any) error {
 		return errors.New("response exceeds the 1 MiB limit")
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		// A 404 is the ordinary "this place id does not exist" answer, and callers
+		// distinguish it from a transport or quota failure.
+		if response.StatusCode == http.StatusNotFound {
+			return ErrPlaceNotFound
+		}
 		var apiError struct {
 			Error struct {
 				Message string `json:"message"`
