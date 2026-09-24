@@ -102,16 +102,17 @@ In `.env` you must at minimum replace:
 
 * `POSTGRES_PASSWORD` **and** the same password inside `DATABASE_URL`
   (generate one: `openssl rand -base64 32`);
+* `WFC_API_HOST` - the API hostname Caddy serves and obtains a certificate for.
+  It is deliberately **not** in `deploy/Caddyfile`: keeping it in `.env` means
+  editing or re-pulling the repo cannot repoint the live certificate;
 * `CORS_ORIGIN` (section 6);
 * `ADMIN_APP_URL`, `ADMIN_COOKIE_DOMAIN`, `ADMIN_COOKIE_SAMESITE` (section 7);
 * `SMTP_*` (section 7) - without `SMTP_HOST` no magic-link mail is sent;
 * `OPENROUTER_SITE_URL` and the API keys you actually use.
 
-Then set your API hostname in the Caddyfile:
-
 ```bash
-sed -i 's/api\.example\.com/api.YOURDOMAIN.com/g' deploy/Caddyfile
-grep -n 'YOURDOMAIN' deploy/Caddyfile    # sanity check the replacement
+# the Caddyfile reads {$WFC_API_HOST} and the caddy service gets it from .env
+grep -n 'WFC_API_HOST' .env deploy/Caddyfile
 ```
 
 Note that the `db` service reads `POSTGRES_DB`/`POSTGRES_USER`/`POSTGRES_PASSWORD`
@@ -540,3 +541,42 @@ The domain then reports `status: pending` while its certificate is issued (a few
 minutes) even though it already serves traffic through Cloudflare's universal
 certificate. `pengenkekopi.shop` has no `_dmarc` record yet; adding
 `v=DMARC1; p=none; rua=mailto:you@pengenkekopi.shop` is the safe first step.
+
+### Editing files that are bind-mounted into a container
+
+`deploy/Caddyfile` is mounted as a **file** (`./Caddyfile:/etc/caddy/Caddyfile:ro`).
+Docker binds that mount to an inode, so replacing the file — `sed -i`, `mv`, or
+most editors — leaves the container reading the *old* content, and a reload then
+reports `config is unchanged` while nothing actually changes. Write in place and
+recreate the container instead:
+
+```bash
+cat new-Caddyfile > /srv/wheretowfc/deploy/Caddyfile     # in place: keeps the inode
+docker compose -f deploy/compose.prod.yaml up -d --force-recreate caddy
+```
+
+`scp` happens to write in place, which is why copying a file *with the wrong
+contents* over this one takes effect immediately and breaks the site. Check the
+container's view before trusting a reload:
+
+```bash
+docker compose -f deploy/compose.prod.yaml exec caddy grep -n 'WFC_API_HOST' /etc/caddy/Caddyfile
+```
+
+### Why the Caddy transport has no read/write timeouts
+
+`read_timeout` and `write_timeout` on `transport http` make Caddy set per-request
+deadlines on pooled upstream connections. In production that produced, for ~13% of
+requests arriving over HTTP/3:
+
+```text
+"failed to set read deadline","error":"set tcp ...: use of closed network connection"
+"aborting with incomplete response","upstream":"api:8080","duration":0.0138","proto":"HTTP/3.0"
+```
+
+Every abort was HTTP/3 (0 on h1/h2) and happened ~12 ms in, so responses the API had
+already produced never reached the browser — the admin app looked disconnected while
+its own logs showed healthy 12 ms responses. Only `dial_timeout` is set now; the API
+enforces its own write timeout. If aborts ever reappear, the next lever is disabling
+HTTP/3 for this site (`servers { protocols h1 h2 }` in a global block), since the
+failure mode is confined to QUIC.

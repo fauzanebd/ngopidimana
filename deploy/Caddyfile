@@ -1,22 +1,24 @@
 # Caddyfile - single public ingress for this VPS.
 #
 # Run by the `caddy` service in deploy/compose.prod.yaml, which mounts this file
-# read-only at /etc/caddy/Caddyfile and publishes 80/443.
+# read-only at /etc/caddy/Caddyfile, publishes 80/443, and passes the deployment's
+# environment through.
 #
-# Replace every occurrence of api.example.com with your real API hostname, then
-# make sure the DNS record exists and points at this server BEFORE the first
-# start (Caddy needs to complete the ACME HTTP-01/TLS-ALPN challenge):
+# The public hostname is NOT written here: it comes from WFC_API_HOST in .env.
+# Keeping it out of this file means editing or re-pulling the repo can never
+# repoint the live certificate by accident.
 #
-#   sed -i 's/api\.example\.com/api.YOURDOMAIN.com/g' deploy/Caddyfile
+#   WFC_API_HOST=api.yourdomain.com     # in .env, before the first start
 #
-# Certificates and ACME account keys live in the caddy_data volume, so they
-# survive `docker compose up -d --build`.
+# The DNS record must exist and point at this server BEFORE the first start
+# (Caddy needs to complete the ACME HTTP-01/TLS-ALPN challenge). Certificates and
+# ACME account keys live in the caddy_data volume, so they survive rebuilds.
 {
 	# Uncomment to receive ACME expiry notices (an address is otherwise optional).
 	# email admin@example.com
 }
 
-api.example.com {
+{$WFC_API_HOST:api.example.com} {
 	# Compress JSON responses; the recommendation payloads are large.
 	encode zstd gzip
 
@@ -33,13 +35,16 @@ api.example.com {
 	# wfc-prod network, so no host port is involved.
 	handle {
 		reverse_proxy api:8080 {
-			# Timeouts sized for the recommendation endpoint: the query
-			# interpreter runs server-side and the API itself enforces a 15s
-			# write timeout, so give Caddy slightly more headroom.
+			# Only a dial timeout here. Explicit read_timeout/write_timeout on the
+			# transport make Caddy set per-request deadlines on pooled upstream
+			# connections; over HTTP/3 that surfaces as
+			#   failed to set read deadline: use of closed network connection
+			# followed by "aborting with incomplete response" ~12ms into the
+			# request, so responses that the API had already produced never
+			# reached the browser. Caddy's own defaults are safer, and the API
+			# enforces its own 15s write timeout anyway.
 			transport http {
 				dial_timeout 5s
-				read_timeout 30s
-				write_timeout 30s
 			}
 			# Caddy-side health awareness of the upstream.
 			health_uri /healthz

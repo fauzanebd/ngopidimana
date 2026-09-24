@@ -110,6 +110,10 @@ services:
     image: caddy:2-alpine
     container_name: wfc-caddy
     restart: unless-stopped
+    # Reads WFC_API_HOST (the site address in Caddyfile) from the same .env the
+    # rest of the stack uses, so the hostname lives outside version control.
+    env_file:
+      - ../.env
     ports:
       - "80:80"
       - "443:443"
