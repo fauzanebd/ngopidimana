@@ -20,6 +20,19 @@ const maxResponseBytes = 1 << 20
 var ErrNotConfigured = errors.New("Google Places API is not configured")
 var ErrPlaceNotFound = errors.New("Google Places could not resolve this venue")
 
+// APIError is a non-2xx answer from Google, kept structured so callers can tell a
+// rejected input (400: "the provided Place ID is not valid") from an outage or a
+// quota refusal (5xx, 429) instead of treating both as "no such place".
+type APIError struct {
+	StatusCode int
+	Status     string
+	Message    string
+}
+
+func (apiError *APIError) Error() string {
+	return fmt.Sprintf("HTTP %d: %s", apiError.StatusCode, apiError.Message)
+}
+
 type Client struct {
 	apiKey       string
 	baseURL      string
@@ -280,7 +293,7 @@ func (client *Client) doJSON(request *http.Request, target any) error {
 		if message == "" {
 			message = http.StatusText(response.StatusCode)
 		}
-		return fmt.Errorf("HTTP %d: %s", response.StatusCode, truncate(message, 240))
+		return &APIError{StatusCode: response.StatusCode, Status: apiError.Error.Status, Message: truncate(message, 240)}
 	}
 	if err := json.Unmarshal(body, target); err != nil {
 		return fmt.Errorf("decode response: %w", err)

@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"errors"
+	"log"
 	"net/http"
 	"strings"
 	"sync"
@@ -89,13 +90,20 @@ func (s *Server) placePhotoHandler(writer http.ResponseWriter, request *http.Req
 	}
 	photo, err := s.resolvePlacePhoto(request, placeID)
 	if err != nil {
-		// A place without photos is an ordinary answer, not a failure: the card
-		// falls back to its generated art either way.
-		if err == errNoPlacePhoto {
+		// A place without photos — or an id Google itself rejects — is an ordinary
+		// answer: the card falls back to its generated art either way.
+		var apiError *googleplaces.APIError
+		switch {
+		case errors.Is(err, errNoPlacePhoto):
 			writeError(writer, http.StatusNotFound, "no photo for this place")
-			return
+		case errors.As(err, &apiError) && apiError.StatusCode == http.StatusBadRequest:
+			writeError(writer, http.StatusNotFound, "no photo for this place")
+		default:
+			// Everything else (quota, 5xx, transport) is a real fault, and the
+			// operator needs Google's own words in the log.
+			log.Printf("place photo for %s failed: %v", placeID, err)
+			writeError(writer, http.StatusBadGateway, "could not load a photo for this place")
 		}
-		writeError(writer, http.StatusBadGateway, "could not load a photo for this place")
 		return
 	}
 	s.photos.set(placeID, photo, now)

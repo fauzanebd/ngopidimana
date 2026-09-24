@@ -18,6 +18,7 @@ type photoGooglePlaces struct {
 	place       googleplaces.Place
 	mediaURL    string
 	mediaErrors map[string]error
+	placeError  error
 	placeCalls  int
 	mediaCalls  int
 }
@@ -26,6 +27,9 @@ func (fake *photoGooglePlaces) Enabled() bool { return true }
 
 func (fake *photoGooglePlaces) GetPlace(context.Context, string) (googleplaces.Place, error) {
 	fake.placeCalls++
+	if fake.placeError != nil {
+		return googleplaces.Place{}, fake.placeError
+	}
 	if fake.place.ID == "" {
 		return googleplaces.Place{}, googleplaces.ErrPlaceNotFound
 	}
@@ -157,5 +161,24 @@ func TestPlacePhotoRejectsMalformedPlaceIDs(t *testing.T) {
 	}
 	if fake.placeCalls != 0 {
 		t.Fatalf("malformed ids reached Google %d times", fake.placeCalls)
+	}
+}
+
+func TestPlacePhotoRejectedIDIsNotFoundNotAGatewayError(t *testing.T) {
+	// Google answers 400 INVALID_ARGUMENT for an id it will not accept, which is
+	// the same user-facing answer as a place that simply has no photos.
+	fake := &photoGooglePlaces{
+		place:       googleplaces.Place{ID: "ChIJbad"},
+		mediaErrors: map[string]error{},
+	}
+	fake.placeError = &googleplaces.APIError{StatusCode: http.StatusBadRequest, Status: "INVALID_ARGUMENT", Message: "The provided Place ID is not valid."}
+	if response := getPhoto(t, photoServer(fake), "/v1/places/ChIJbad/photo"); response.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404 for an id Google rejects", response.Code)
+	}
+
+	// An outage is not a missing photo, and must not be silently swallowed.
+	fake.placeError = &googleplaces.APIError{StatusCode: http.StatusTooManyRequests, Status: "RESOURCE_EXHAUSTED", Message: "Quota exceeded"}
+	if response := getPhoto(t, photoServer(fake), "/v1/places/ChIJbad/photo"); response.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502 when Google refuses us", response.Code)
 	}
 }
