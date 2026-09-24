@@ -577,6 +577,9 @@ requests arriving over HTTP/3:
 Every abort was HTTP/3 (0 on h1/h2) and happened ~12 ms in, so responses the API had
 already produced never reached the browser — the admin app looked disconnected while
 its own logs showed healthy 12 ms responses. Only `dial_timeout` is set now; the API
-enforces its own write timeout. If aborts ever reappear, the next lever is disabling
-HTTP/3 for this site (`servers { protocols h1 h2 }` in a global block), since the
-failure mode is confined to QUIC.
+enforces its own write timeout. HTTP/3 is now **disabled** in the Caddyfile
+global block (`servers { protocols h1 h2 }`): aborts reappeared at a low rate, every
+one of them HTTP/3 and every one on the largest JSON the admin app fetches, where a
+cut body reached the browser as a request that failed to parse. The site no longer
+advertises an `Alt-Svc: h3` header, so browsers stay on TCP. Re-enabling it is a
+one-line change with that evidence worth re-reading first.

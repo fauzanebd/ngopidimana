@@ -16,6 +16,16 @@
 {
 	# Uncomment to receive ACME expiry notices (an address is otherwise optional).
 	# email admin@example.com
+
+	servers {
+		# HTTP/3 is deliberately OFF. Responses kept being truncated mid-body over
+		# QUIC (Caddy logged "aborting with incomplete response", every one of them
+		# HTTP/3, and only ever on the largest JSON the admin app fetches), which the
+		# browser surfaced as a request that failed to parse. TCP has no equivalent
+		# failure mode and HTTP/2 is universally supported, so the upside of QUIC is
+		# not worth a client-visible data-integrity problem.
+		protocols h1 h2
+	}
 }
 
 {$WFC_API_HOST:api.example.com} {

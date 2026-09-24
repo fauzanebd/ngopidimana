@@ -47,7 +47,18 @@ export async function request<T>(path: string, init: ApiRequestInit = {}): Promi
   } catch (cause) {
     throw new ApiError(0, unreachable(cause));
   }
-  const body = response.status === 204 ? null : await response.json().catch(() => null);
+  // Endpoints with no response body are called as request<void>.
+  if (response.status === 204) return undefined as T;
+  let body: unknown;
+  try {
+    body = await response.json();
+  } catch {
+    // A body that cannot be read is a failure the caller has to hear about. Swallowing
+    // it into null used to surface as "Cannot read properties of null (reading 'runs')"
+    // — an opaque crash instead of the retry banner — when a response was cut short in
+    // transit (a proxy or connection dropping the body mid-flight).
+    throw new ApiError(response.status, response.ok ? "The API response was cut short" : fallback);
+  }
   if (!response.ok) throw new ApiError(response.status, errorMessage(body, fallback));
   return body as T;
 }

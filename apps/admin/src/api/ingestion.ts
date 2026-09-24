@@ -1,4 +1,4 @@
-import { request, type ApiRequestInit } from "./client";
+import { ApiError, request, type ApiRequestInit } from "./client";
 import type { GooglePlace, ManualEvidenceInput, PhotoOverride, Run, RunAction } from "../types";
 
 const INGESTION_ERROR = "The ingestion API request failed";
@@ -9,7 +9,10 @@ function ingest<T>(path: string, init: ApiRequestInit = {}): Promise<T> {
 
 export async function listRuns(): Promise<Run[]> {
   const body = await ingest<{ runs: Run[] }>("/v1/admin/ingestion-runs");
-  return body.runs || [];
+  // A 200 whose shape is wrong must read as a failure, not as "no records": showing an
+  // empty queue for an unreadable response is how a hiccup looked like data loss.
+  if (!body || typeof body !== "object" || !Array.isArray(body.runs)) throw new ApiError(0, "The API returned an unexpected queue response");
+  return body.runs;
 }
 
 export async function createRun(url: string): Promise<Run> {
