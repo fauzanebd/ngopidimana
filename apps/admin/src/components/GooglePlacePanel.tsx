@@ -9,7 +9,7 @@ export function GooglePlacePanel({ run }: { run: Run }) {
     if (run.source !== "google_maps" || run.state === "enriching") return null;
     return <section className="mb-5 rounded-xl border border-ink/15 bg-white/55 p-4">
       <p className="text-xs font-bold uppercase tracking-[0.12em] text-ink/55">Official Google review reference</p>
-      <p className="mt-2 text-xs leading-5 text-ink/50">No Google Place ID is linked yet. Add <code>GOOGLE_PLACES_API_KEY</code>, restart the API and worker, then re-run extraction.</p>
+      <p className="mt-2 text-xs leading-5 text-ink/50">No Google Place ID is linked yet, so this record cannot be published. Re-run extraction to resolve it; if it keeps failing, the enrichment note above records the reason — a venue name that does not match a Google listing, or Google Places not being configured on the API.</p>
     </section>;
   }
 

@@ -171,7 +171,7 @@ func (s *Server) getGooglePlace(writer http.ResponseWriter, request *http.Reques
 		return
 	}
 	if run.GooglePlaceID == "" {
-		writeError(writer, http.StatusNotFound, "this record has not been linked to a Google Place; re-run extraction after configuring GOOGLE_PLACES_API_KEY")
+		writeError(writer, http.StatusNotFound, "this record has not been linked to a Google Place; re-run extraction")
 		return
 	}
 	place, err := s.googlePlaces.GetPlace(request.Context(), run.GooglePlaceID)
